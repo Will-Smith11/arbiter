@@ -125,13 +125,12 @@ fn deploy_contracts(
         recast_address(registry.address),
     );
     let portfolio = portfolio.deploy(&mut manager.environment, admin, portfolio_args);
-    let portfolio_version_result = admin
-        .call_contract(
-            &mut manager.environment,
-            &portfolio,
-            portfolio.encode_function("VERSION", ())?,
-            Uint::from(0),
-        );
+    let portfolio_version_result = admin.call_contract(
+        &mut manager.environment,
+        &portfolio,
+        portfolio.encode_function("VERSION", ())?,
+        Uint::from(0),
+    );
     assert!(portfolio_version_result.is_success());
     let unpacked_portfolio_version = unpack_execution(portfolio_version_result)?;
     let decoded_portfolio_version: String =
@@ -464,7 +463,7 @@ fn allocate(
     // --------------------------------------------------------------------------------------------
     let allocate_args = rmm01_portfolio::AllocateCall {
         use_max: false,                           // use_max: bool, // Usually set to false?
-        recipient: admin.address().into(),                         // recipient: Address
+        recipient: admin.address().into(),        // recipient: Address
         pool_id,                                  // pool_id: u64,
         delta_liquidity: delta_liquidity as u128, // delta_liquidity: u128,
         max_delta_asset: liquidity_deltas.0,      // max_delta_asset: u128,
