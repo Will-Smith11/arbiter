@@ -213,7 +213,6 @@ where
         pool_id,                               // pool_id: u64,
         sell_asset, // sell_asset: bool. Setting this to true means we are selling ARBX for ARBY.
         amount_in: U256::from(input_amount), // amount_in: ::ethers::core::types::U256,
-        liquidity_delta: I256::from(0), // liquidity_delta: ::ethers::core::types::I256,
         swapper: arbitrageur.address().into(), // swapper: ::ethers::core::types::Address,
     };
     let get_amount_out_result = arbitrageur.call_contract(
@@ -222,6 +221,7 @@ where
         portfolio.encode_function("getAmountOut", get_amount_out_args)?,
         Uint::from(0),
     );
+    println!("amount in is: {}", U256::from(input_amount));
     assert!(get_amount_out_result.is_success());
     let unpacked_get_amount_out = unpack_execution(get_amount_out_result)?;
     let decoded_amount_out: u128 =

@@ -28,3 +28,9 @@
 	path = contracts/solidity-lib
 	url = https://github.com/Uniswap/solidity-lib
 	branch = v2.1.0
+[submodule "contracts\\v3-core"]
+	branch = v1.0.0
+[submodule "contracts\\v2-core"]
+	branch = v1.0.1
+[submodule "contracts\\solidity-lib"]
+	branch = v2.1.0
