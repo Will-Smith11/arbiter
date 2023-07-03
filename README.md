@@ -24,6 +24,9 @@ Arbiter can be used for:
 
 For our next beta release, we will be focusing on the following features:
 
+    - Arbiter CLI to build and run simulations in your own project directories
+    - Implementation of ethers-rs middleware as our base layer abstraction over REVM and EOAs(Agents)
+    - A more idiomatic library interface to building simulations and agents
 
 ## Build From Source
 
@@ -56,16 +59,11 @@ cargo doc --workspace --no-deps --open
 
 This will generate and open the docs in your browser. From there, you can look at the documentation for each crate in the Arbiter workspace.
 
-## Including More Contracts
-
-In the `contracts/` directory you can add additional smart contracts or regenerate Rust bindings. Once that is done, you will want to make sure the bindings are generated in the script:
+There is also a community driven MDbook with more thorough documention that can be hosted by running the following:
 
 ```bash
-./bind.sh
+mdbook serve documentation
 ```
-You will need to add the relevant directory for your new contracts to the script above and make sure they are also handled by `forge install`. We look forward to improving upon this UX in the future.
-
-At the moment, this only builds the bindings for the contracts in the `lib/arbmod/contracts/` and `lib/portfolio/contracts`. You can of course add an additional directory of contracts in `lib/`. Just be sure to include it when you generate bindings!
 
 ## Contributing
 

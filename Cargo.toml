@@ -13,6 +13,15 @@ name = "arbiter"
 version = "0.2.0"
 edition = "2021"
 authors = ["Colin Roberts", "Waylon Jepsen"]
+description = "A framework for building multi-agent simulations with EVM parity"
+readme = "README.md"
+keywords = ["Ethereum", "Simulations"]
+license = "Apache-2.0"
+categories = ["simulation", "command-line-utilities", "development-tools::build-utils", "development-tools::cargo-plugins", "finance"]
+repository = "https://github.com/primitivefinance/arbiter"
+publish = ["arbiter"]
+
+
 
 # Binary configuration
 [[bin]]
