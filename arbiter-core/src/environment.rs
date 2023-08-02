@@ -18,12 +18,15 @@ use revm::{
     primitives::{ExecutionResult, Log, TxEnv, U256},
     EVM,
 };
+use anyhow::Result;
+use artemis_core::types::Strategy;
 
 use crate::{
     agent::{Agent, IsAttached, NotAttached},
     math::stochastic_process::sample_poisson,
     middleware::RevmMiddleware,
-    utils::{convert_uint_to_u64, revm_logs_to_ethers_logs, },
+    utils::{convert_uint_to_u64, revm_logs_to_ethers_logs},
+    strategies::{Event, Action},
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -51,6 +54,7 @@ pub enum State {
     Stopped,
 }
 
+
 /// The environment struct.
 pub struct Environment {
     /// label for the environment
@@ -62,12 +66,25 @@ pub struct Environment {
     pub(crate) event_broadcaster: Arc<Mutex<EventBroadcaster>>,
     /// Clients (Agents) in the environment
     pub agents: Vec<Agent<IsAttached<RevmMiddleware>>>,
+    /// Trying out a vector of artemis strategies
+    // pub strategies: Vec<Strategy<E, A>>,
+    pub unique_strategies: Vec<S>,
     /// expected events per block
     pub lambda: Option<f64>,
     pub tx_per_block: Arc<AtomicUsize>,
-
 }
 
+/// Associate types so we don't need to wrap all around stuff
+trait Stratty {
+    type Event;
+    type Action: Send+Sync;
+}
+pub struct S;
+#[async_trait::async_trait]
+impl Stratty for S {
+    type Event = Event;
+    type Action = Action;
+}
 
 // TODO: If the provider holds the connection then this can work better.
 #[derive(Clone)]
@@ -101,14 +118,13 @@ impl JsonRpcClient for RevmProvider {
                 let logs_deserializeowned: R = serde_json::from_str(&logs_str)?;
                 return Ok(logs_deserializeowned);
                 // return Ok(serde::to_value(self.event_receiver.recv().ok()).unwrap())
-            },
+            }
             _ => {
                 unimplemented!("We don't cover this case yet.")
             }
         }
     }
 }
-
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
@@ -129,6 +145,8 @@ impl Environment {
             agents: vec![],
             lambda: None,
             tx_per_block: Arc::new(AtomicUsize::new(0)),
+            unique_strategies: vec![],
+            
         }
     }
 
@@ -187,7 +205,6 @@ impl Environment {
                     if let Some(_occurance) = &expected_occurance {
                         counter.fetch_add(1, Ordering::Relaxed);
                     }
-
                 } else {
                     let execution_result = match evm.transact() {
                         Ok(val) => val,

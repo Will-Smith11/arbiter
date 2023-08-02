@@ -8,12 +8,7 @@ use ethers::{
     types::{Address, Filter},
 };
 
-use crate::{
-    agent::{*},
-    bindings::arbiter_token::*,
-    environment::{*},
-    middleware::{*},
-};
+use crate::{agent::*, bindings::arbiter_token::*, environment::*, middleware::*};
 
 const TEST_ARG_NAME: &str = "ArbiterToken";
 const TEST_ARG_SYMBOL: &str = "ARBT";
@@ -42,7 +37,6 @@ fn attach_agent() {
     assert_eq!(environment.agents[0].name, TEST_AGENT_NAME);
 }
 
-
 #[test]
 fn simulation_agent_wallet() {
     let environment = &mut Environment::new(TEST_ENV_LABEL);
@@ -57,11 +51,9 @@ fn simulation_agent_wallet() {
 #[test]
 fn multiple_agent_addresses() {
     let environment = &mut Environment::new(TEST_ENV_LABEL);
-    let agent =
-        Agent::new(TEST_AGENT_NAME);
+    let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
-    let agent2 =
-        Agent::new(format!("new_{}", TEST_AGENT_NAME));
+    let agent2 = Agent::new(format!("new_{}", TEST_AGENT_NAME));
     agent2.attach_to_environment(environment);
     assert_ne!(
         environment.agents[0].client.default_sender(),
