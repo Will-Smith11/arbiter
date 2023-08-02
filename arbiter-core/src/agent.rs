@@ -55,7 +55,7 @@ impl Agent<NotAttached> {
     pub fn attach_to_environment(self, environment: &mut crate::environment::Environment) {
         let middleware = RevmMiddleware::new(&self, environment);
         let agent_attached = self.attach_to_client(middleware.into());
-        environment.agent.push(agent_attached);
+        environment.agents.push(agent_attached);
     }
 }
 
