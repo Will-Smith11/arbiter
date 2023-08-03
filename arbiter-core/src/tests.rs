@@ -1,22 +1,30 @@
 #![allow(missing_docs)]
-use std::str::FromStr;
 use std::sync::Arc;
+use std::{
+    str::FromStr,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use ethers::{
     prelude::{FilterWatcher, Middleware, StreamExt},
-    types::{Address, Filter},
+    types::{Address, Filter, U64},
 };
 
 use crate::{agent::*, bindings::arbiter_token::*, environment::*, middleware::*};
+use crate::{
+    agent::{tests::TEST_AGENT_NAME, *},
+    bindings::arbiter_token::*,
+    environment::{tests::TEST_ENV_LABEL, *},
+    math::*,
+    middleware::*,
+};
 
-const TEST_ARG_NAME: &str = "ArbiterToken";
-const TEST_ARG_SYMBOL: &str = "ARBT";
-const TEST_ARG_DECIMALS: u8 = 18;
-const TEST_MINT_AMOUNT: u128 = 1;
-const TEST_MINT_TO: &str = "0xf7e93cc543d97af6632c9b8864417379dba4bf15";
-const TEST_ENV_LABEL: &str = "test_env";
-const TEST_AGENT_NAME: &str = "test_agent";
+pub const TEST_ARG_NAME: &str = "ArbiterToken";
+pub const TEST_ARG_SYMBOL: &str = "ARBT";
+pub const TEST_ARG_DECIMALS: u8 = 18;
+pub const TEST_MINT_AMOUNT: u128 = 1;
+pub const TEST_MINT_TO: &str = "0xf7e93cc543d97af6632c9b8864417379dba4bf15";
 
 #[test]
 fn token_mint() -> Result<()> {
@@ -31,7 +39,7 @@ fn arbiter_math() -> Result<()> {
 // TODO: Finish off a test like this.
 #[test]
 fn attach_agent() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
     assert_eq!(environment.agents[0].name, TEST_AGENT_NAME);
@@ -39,7 +47,7 @@ fn attach_agent() {
 
 #[test]
 fn simulation_agent_wallet() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
     assert_eq!(
@@ -50,7 +58,7 @@ fn simulation_agent_wallet() {
 
 #[test]
 fn multiple_agent_addresses() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
     let agent2 = Agent::new(format!("new_{}", TEST_AGENT_NAME));
@@ -61,13 +69,14 @@ fn multiple_agent_addresses() {
     );
 }
 
+// TODO: Test to see that we prvent agents with the same name from being added.
 #[test]
 fn agent_name_collision() {
     todo!();
 }
 
 async fn deploy() -> Result<ArbiterToken<RevmMiddleware>> {
-    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
     environment.run();
@@ -151,16 +160,60 @@ async fn transact() -> Result<()> {
 
 #[tokio::test]
 async fn filter_watcher() -> Result<()> {
-    // let mut environment = Environment::new(TEST_ENV_LABEL.to_string());
-    // environment.run();
-    // let agent = Agent::new_simulation_agent(TEST_AGENT_NAME.to_string(), environment.connection);
-    // let arbiter_token = deploy().await.unwrap();
-    // let filter = arbiter_token.approval_filter().filter;
-    // let mut filter_watcher = agent.client.watch(&filter).await?;
-    // let event = filter_watcher.next().await;
-    // println!("{:?}", event);
-    // Ok(())
+    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let agent = Agent::new(TEST_AGENT_NAME);
+    agent.attach_to_environment(environment);
+    environment.run();
+    let client = environment.agents[0].client.clone();
+    let arbiter_token = deploy().await.unwrap();
+    let filter = arbiter_token.approval_filter().filter;
+    let mut filter_watcher = client.watch(&filter).await?;
+    let event = filter_watcher.next().await;
+    println!("{:?}", event);
+    Ok(())
 
     // TODO: Test that we can filter out approvals and NOT transfers (or something like this)
-    todo!()
+}
+
+// This test has two parts
+// 1 check that the expected number of transactions per block is the actual number of transactions per block.
+// 2 check the block number is incremented after the expected number of transactions is reached.
+#[tokio::test]
+async fn transaction_loop() -> Result<()> {
+    let mut env = Environment::new(TEST_ENV_LABEL, 2.0, 1);
+
+    let mut dist = env.seeded_poisson.clone();
+    let expected_tx_per_block = dist.sample();
+
+    println!("expected_tx_per_block: {}", expected_tx_per_block);
+
+    let agent = Agent::new(TEST_AGENT_NAME);
+    env.add_agent(agent);
+    let agent = &env.agents[0];
+    // tx_0 is the transaction that creates the token contract
+    let arbiter_token = deploy().await?;
+
+    for index in 1..expected_tx_per_block {
+        println!("index: {}", index);
+        let tx = arbiter_token
+            .mint(agent.client.default_sender().unwrap(), 1000u64.into())
+            .send()
+            .await
+            .unwrap()
+            .await
+            .unwrap()
+            .unwrap();
+
+        // minus 1 from deploy tx
+        if index < expected_tx_per_block - 1 {
+            let block_number = tx.block_number.unwrap();
+            println!("block_number: {}", block_number);
+            assert_eq!(block_number, U64::from(0));
+        } else {
+            let block_number = tx.block_number.unwrap();
+            println!("block_number: {}", block_number);
+            assert_eq!(block_number, U64::from(1));
+        }
+    }
+    Ok(())
 }

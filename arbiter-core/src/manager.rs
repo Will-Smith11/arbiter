@@ -28,26 +28,24 @@ impl SimulationManager {
     }
 
     /// Adds an environment to the [`SimulationManager`]'s list.
-    pub fn add_environment(&mut self, environment_label: String) -> Result<()> {
+    pub fn add_environment(
+        &mut self,
+        environment_label: String,
+        block_rate: f64,
+        seed: u64,
+    ) -> Result<()> {
         if self.environments.get(&environment_label).is_some() {
             return Err(anyhow!("Environment already exists."));
         }
         self.environments.insert(
             environment_label.clone(),
-            Environment::new(environment_label),
+            Environment::new(environment_label, block_rate, seed),
         );
         Ok(())
     }
 
-    /// Configure the lambda for an environment.
-    pub fn configure_lambda(&mut self, lambda: f64, environment_label: String) -> Result<()> {
-        match self.environments.get_mut(&environment_label) {
-            Some(environment) => {
-                environment.configure_lambda(lambda);
-                Ok(())
-            }
-            None => Err(anyhow!("Environment does not exist.")),
-        }
+    pub fn _stop_environemt(self, _environment_label: String) -> Result<()> {
+        todo!()
     }
 
     /// adds an agent to an environment
@@ -95,7 +93,7 @@ pub(crate) mod tests {
     fn add_environment() {
         let mut manager = SimulationManager::new();
         let label = "test".to_string();
-        manager.add_environment(label.clone()).unwrap();
+        manager.add_environment(label.clone(), 1.0, 1).unwrap();
         assert!(manager.environments.contains_key(&label));
     }
 
@@ -103,7 +101,7 @@ pub(crate) mod tests {
     fn run_environment() {
         let mut manager = SimulationManager::new();
         let label = "test".to_string();
-        manager.add_environment(label.clone()).unwrap();
+        manager.add_environment(label.clone(), 1.0, 1).unwrap();
         manager.run_environment(label.clone()).unwrap();
         assert_eq!(
             manager.environments.get(&label).unwrap().state,

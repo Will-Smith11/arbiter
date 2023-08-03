@@ -1,18 +1,9 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use std::{
-    fmt::Debug,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
-    thread,
-};
-
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ethers::core::types::U64;
-use ethers::providers::{JsonRpcClient, ProviderError};
+use ethers::{providers::{JsonRpcClient, ProviderError}, types::{Filter, H256}, prelude::k256::sha2::{Digest, Sha256}, utils::serialize};
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{ExecutionResult, Log, TxEnv, U256},
@@ -20,15 +11,20 @@ use revm::{
 };
 use anyhow::Result;
 use artemis_core::types::Strategy;
+use serde::{de::DeserializeOwned, Serialize};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Mutex},
+    thread, collections::HashMap,
+};
 
 use crate::{
     agent::{Agent, IsAttached, NotAttached},
-    math::stochastic_process::sample_poisson,
+    math::stochastic_process::{sample_poisson, SeededPoisson},
     middleware::RevmMiddleware,
     utils::{convert_uint_to_u64, revm_logs_to_ethers_logs},
     strategies::{Event, Action},
 };
-use serde::{de::DeserializeOwned, Serialize};
 
 /// Type Aliases for the event channel.
 pub(crate) type ToTransact = bool;
@@ -69,9 +65,7 @@ pub struct Environment {
     /// Trying out a vector of artemis strategies
     // pub strategies: Vec<Strategy<E, A>>,
     pub unique_strategies: Vec<S>,
-    /// expected events per block
-    pub lambda: Option<f64>,
-    pub tx_per_block: Arc<AtomicUsize>,
+    pub seeded_poisson: SeededPoisson,
 }
 
 /// Associate types so we don't need to wrap all around stuff
@@ -86,6 +80,7 @@ impl Stratty for S {
     type Action = Action;
 }
 
+
 // TODO: If the provider holds the connection then this can work better.
 #[derive(Clone)]
 pub struct RevmProvider {
@@ -93,6 +88,7 @@ pub struct RevmProvider {
     pub(crate) result_sender: crossbeam_channel::Sender<RevmResult>,
     pub(crate) result_receiver: crossbeam_channel::Receiver<RevmResult>,
     pub(crate) event_receiver: crossbeam_channel::Receiver<Vec<ethers::types::Log>>,
+    // pub(crate) filter_receivers: HashMap<ethers::types::U256, crossbeam_channel::Receiver<Vec<ethers::types::Log>>>, // TODO: Use this to replace event_receivers so we can look for updates in specific filters
 }
 
 impl Debug for RevmProvider {
@@ -108,17 +104,29 @@ impl JsonRpcClient for RevmProvider {
     async fn request<T: Serialize + Send + Sync, R: DeserializeOwned>(
         &self,
         method: &str,
-        _params: T,
+        params: T,
     ) -> Result<R, ProviderError> {
         match method {
             "eth_getFilterChanges" => {
+                // Store a Map of filters with their IDs as keys
                 let logs = self.event_receiver.recv().unwrap();
                 println!("logs: {:?}", logs);
                 let logs_str = serde_json::to_string(&logs).unwrap();
                 let logs_deserializeowned: R = serde_json::from_str(&logs_str)?;
                 return Ok(logs_deserializeowned);
                 // return Ok(serde::to_value(self.event_receiver.recv().ok()).unwrap())
-            }
+            },
+            "eth_newFilter" => {
+                let filter_string = serde_json::to_string(&params).unwrap();
+                let filter: Filter = serde_json::from_str(&filter_string).unwrap();
+                let mut hasher = Sha256::new();
+                hasher.update(filter_string.as_bytes());
+                let hash = hasher.finalize();
+                let id = ethers::types::U256::from(ethers::types::H256::from_slice(&hash).as_bytes());
+                let id_str = serde_json::to_string(&id).unwrap();
+                let id_deserializeowned: R = serde_json::from_str(&id_str)?;
+                Ok(id_deserializeowned)
+            },
             _ => {
                 unimplemented!("We don't cover this case yet.")
             }
@@ -128,10 +136,12 @@ impl JsonRpcClient for RevmProvider {
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
-    pub(crate) fn new<S: Into<String>>(label: S) -> Self {
+    pub(crate) fn new<S: Into<String>>(label: S, block_rate: f64, seed: u64) -> Self {
         let mut evm = EVM::new();
         let db = CacheDB::new(EmptyDB {});
         evm.database(db);
+
+        let seeded_poisson = SeededPoisson::new(block_rate, seed);
         evm.env.cfg.limit_contract_code_size = Some(0x100000); // This is a large contract size limit, beware!
         evm.env.block.gas_limit = U256::MAX;
         let (tx_sender, tx_receiver) = unbounded::<(ToTransact, TxEnv, Sender<RevmResult>)>();
@@ -143,15 +153,9 @@ impl Environment {
             tx_receiver,
             event_broadcaster: Arc::new(Mutex::new(EventBroadcaster::new())),
             agents: vec![],
-            lambda: None,
-            tx_per_block: Arc::new(AtomicUsize::new(0)),
+            seeded_poisson,
             unique_strategies: vec![],
-            
         }
-    }
-
-    pub(crate) fn configure_lambda(&mut self, lamda: f64) {
-        self.lambda = Some(lamda);
     }
 
     /// Creates a new [`Agent<RevmMiddleware`] with the given label.
@@ -168,21 +172,24 @@ impl Environment {
         let tx_receiver = self.tx_receiver.clone();
         let mut evm = self.evm.clone();
         let event_broadcaster = self.event_broadcaster.clone();
-        let counter = Arc::clone(&self.tx_per_block);
+
+        let mut seeded_poisson = self.seeded_poisson.clone();
+
+        let mut counter: usize = 0;
         self.state = State::Running;
-        let mut expected_occurance: Option<Vec<i32>> = None;
-        if let Some(lambda) = self.lambda {
-            expected_occurance = Some(sample_poisson(lambda).unwrap());
-        }
-        //give all agents their own thread and let them start watching for their evnts
+
         thread::spawn(move || {
+            let mut expected_events_per_block = seeded_poisson.sample();
+
             while let Ok((to_transact, tx, sender)) = tx_receiver.recv() {
                 // Execute the transaction, echo the logs to all agents, and report the execution result to the agent who made the transaction.
-                if let Some(occurance) = &expected_occurance {
-                    if counter.load(Ordering::Relaxed) >= occurance[0] as usize {
-                        evm.env.block.number += U256::from(1);
-                        counter.store(0, Ordering::Relaxed);
-                    }
+                if counter == expected_events_per_block {
+                    counter = 0;
+                    println!("EVM expected number of transactions reached. Moving to next block.");
+                    println!("old block number: {:?}", evm.env.block.number);
+                    evm.env.block.number += U256::from(1);
+                    println!("new block number: {:?}", evm.env.block.number);
+                    expected_events_per_block = seeded_poisson.sample();
                 }
 
                 evm.env.tx = tx;
@@ -202,9 +209,7 @@ impl Environment {
                         block_number: convert_uint_to_u64(evm.env.block.number).unwrap(),
                     };
                     sender.send(revm_result).unwrap();
-                    if let Some(_occurance) = &expected_occurance {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                    }
+                    counter += 1;
                 } else {
                     let execution_result = match evm.transact() {
                         Ok(val) => val,
@@ -247,20 +252,27 @@ impl EventBroadcaster {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::time::Duration;
+
+    use anyhow::{Ok, Result};
+    use ethers::types::Address;
+
+    use crate::bindings::arbiter_token::ArbiterToken;
+
     use super::*;
 
     pub(crate) const TEST_ENV_LABEL: &str = "test";
 
     #[test]
     fn new() {
-        let env = Environment::new(TEST_ENV_LABEL.to_string());
+        let env = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1);
         assert_eq!(env.label, TEST_ENV_LABEL);
         assert_eq!(env.state, State::Stopped);
     }
 
     #[test]
     fn run() {
-        let mut environment = Environment::new(TEST_ENV_LABEL.to_string());
+        let mut environment = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1);
         environment.run();
         assert_eq!(environment.state, State::Running);
     }
