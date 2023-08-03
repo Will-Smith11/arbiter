@@ -1,29 +1,29 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
+use artemis_core::types::Strategy;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ethers::core::types::U64;
-use ethers::{providers::{JsonRpcClient, ProviderError}, types::{Filter, H256}, prelude::k256::sha2::{Digest, Sha256}, utils::serialize};
+use ethers::{providers::{JsonRpcClient, ProviderError}, types::Filter, prelude::k256::sha2::{Digest, Sha256}};
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{ExecutionResult, Log, TxEnv, U256},
     EVM,
 };
+// use artemis_core::types::Strategy;
 use anyhow::Result;
-use artemis_core::types::Strategy;
 use serde::{de::DeserializeOwned, Serialize};
 use std::{
     fmt::Debug,
     sync::{Arc, Mutex},
-    thread, collections::HashMap,
+    thread,
 };
 
 use crate::{
     agent::{Agent, IsAttached, NotAttached},
-    math::stochastic_process::{sample_poisson, SeededPoisson},
+    math::stochastic_process::SeededPoisson,
     middleware::RevmMiddleware,
     utils::{convert_uint_to_u64, revm_logs_to_ethers_logs},
-    strategies::{Event, Action},
 };
 
 /// Type Aliases for the event channel.
@@ -58,30 +58,18 @@ pub struct Environment {
     pub(crate) state: State,
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
     pub(crate) tx_sender: TxEnvSender,
-    pub tx_receiver: TxEnvReceiver,
+    pub(crate) tx_receiver: TxEnvReceiver,
     pub(crate) event_broadcaster: Arc<Mutex<EventBroadcaster>>,
     /// Clients (Agents) in the environment
     pub agents: Vec<Agent<IsAttached<RevmMiddleware>>>,
     /// Trying out a vector of artemis strategies
-    // pub strategies: Vec<Strategy<E, A>>,
-    pub unique_strategies: Vec<S>,
-    pub seeded_poisson: SeededPoisson,
-}
-
-/// Associate types so we don't need to wrap all around stuff
-trait Stratty {
-    type Event;
-    type Action: Send+Sync;
-}
-pub struct S;
-#[async_trait::async_trait]
-impl Stratty for S {
-    type Event = Event;
-    type Action = Action;
+    pub unique_strategies: Vec<Box<dyn Strategy<RevmResult, ()> + 'static>>,
+    pub(crate) seeded_poisson: SeededPoisson,
 }
 
 
 // TODO: If the provider holds the connection then this can work better.
+/// revm provider
 #[derive(Clone)]
 pub struct RevmProvider {
     pub(crate) tx_sender: TxEnvSender,
@@ -163,8 +151,12 @@ impl Environment {
     // in `agent.rs` we have `new_simulation_agent` which should probably just be called from this function instead.
     // OR agents can be created (without a connection?) and then added to the environment where they will gain a connection?
     // Waylon: I like them being created without a connection and then added to the environment where they will gain a connection.
-    pub fn add_agent(&mut self, agent: Agent<NotAttached>) {
+    pub(crate) fn add_agent(&mut self, agent: Agent<NotAttached>) {
         agent.attach_to_environment(self);
+    }
+
+    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<RevmResult, ()>>) {
+        self.unique_strategies.push(strategy);
     }
 
     // TODO: Run should now run the agents as well as the evm.

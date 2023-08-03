@@ -6,10 +6,11 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
+use artemis_core::types::Strategy;
 
 use crate::{
     agent::{Agent, NotAttached},
-    environment::{Environment, State},
+    environment::{Environment, State, RevmResult},
 };
 
 /// Manages simulations.
@@ -57,6 +58,16 @@ impl SimulationManager {
         match self.environments.get_mut(&environment_label) {
             Some(environment) => {
                 environment.add_agent(agent);
+                Ok(())
+            }
+            None => Err(anyhow!("Environment does not exist.")),
+        }
+    }
+    /// adds a strategy to an environment
+    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<RevmResult, ()>>) -> Result<()> {
+        match self.environments.get_mut(&environment_label) {
+            Some(environment) => {
+                environment.add_strategy(strat);
                 Ok(())
             }
             None => Err(anyhow!("Environment does not exist.")),

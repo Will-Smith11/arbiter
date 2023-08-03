@@ -160,7 +160,7 @@ async fn transact() -> Result<()> {
 
 #[tokio::test]
 async fn filter_watcher() -> Result<()> {
-    let environment = &mut Environment::new(TEST_ENV_LABEL);
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     let agent = Agent::new(TEST_AGENT_NAME);
     agent.attach_to_environment(environment);
     environment.run();
