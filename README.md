@@ -20,11 +20,6 @@ Arbiter can be used for:
 - investigating risk, capital efficiency, rebalancing strategies, and portfolio replication (or performance). (LPs, funds, quants, traders)
 - Engineering and testing new financial products built on top of more primitive financial products (DeFi firms and academics)
 
-## Features:
-
-For our next beta release, we will be focusing on the following features:
-
-
 ## Build From Source
 
 First, clone the repository to your local environment so
@@ -37,13 +32,7 @@ cd arbiter
 Install arbiter on your system:
 
 ```bash
-cargo install --path . --force
-```
-
-With the `arbiter` binary generated, you can run commands such as:
-
-```bash
-arbiter simulate uniswap
+cargo install --path .
 ```
 
 ## Generating Docs
@@ -55,17 +44,6 @@ cargo doc --workspace --no-deps --open
 ```
 
 This will generate and open the docs in your browser. From there, you can look at the documentation for each crate in the Arbiter workspace.
-
-## Including More Contracts
-
-In the `contracts/` directory you can add additional smart contracts or regenerate Rust bindings. Once that is done, you will want to make sure the bindings are generated in the script:
-
-```bash
-./bind.sh
-```
-You will need to add the relevant directory for your new contracts to the script above and make sure they are also handled by `forge install`. We look forward to improving upon this UX in the future.
-
-At the moment, this only builds the bindings for the contracts in the `lib/arbmod/contracts/` and `lib/portfolio/contracts`. You can of course add an additional directory of contracts in `lib/`. Just be sure to include it when you generate bindings!
 
 ## Contributing
 
