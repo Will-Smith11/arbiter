@@ -130,16 +130,6 @@ async fn transact() -> Result<()> {
     Ok(())
 }
 
-// #[tokio::test]
-// async fn watch() -> Result<()> {
-//     let mut environment = Environment::new(TEST_ENV_LABEL.to_string());
-//     environment.run();
-//     let agent = Agent::new_simulation_agent(TEST_AGENT_NAME.to_string(), environment.connection);
-//     let mut filter_watcher = agent.client.watch(&Filter::default()).await?; // this can give agents multiple filters to watch!
-//     let output = filter_watcher.next().await;
-//     Ok(())
-// }
-
 #[tokio::test]
 async fn filter_watcher() -> Result<()> {
     let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
@@ -148,9 +138,17 @@ async fn filter_watcher() -> Result<()> {
     environment.run();
     let client = environment.agents[0].client.clone();
     let arbiter_token = deploy().await.unwrap();
+    println!("arbiter token address: {:?}", arbiter_token.address());
     let filter = arbiter_token.approval_filter().filter;
-    let mut filter_watcher = client.watch(&filter).await?;
-    let event = filter_watcher.next().await;
+    println!("filter address: {:#?}", filter.address);
+    println!("filter in test: {:?}", filter);
+    let mut filter_watcher = client.watch(&Filter::default()).await?;
+    let event = filter_watcher.next();
+    let approval = arbiter_token.approve(client.default_sender().unwrap(), ethers::types::U256::from(100));
+    let thing = approval.send().await?.await?;
+    println!("approval sent");
+    println!("thing: {:?}", thing);
+    let event = event.await;
     println!("{:?}", event);
     Ok(())
 
