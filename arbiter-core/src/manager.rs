@@ -9,8 +9,7 @@ use anyhow::{anyhow, Result};
 use artemis_core::types::Strategy;
 
 use crate::{
-    agent::{Agent, NotAttached},
-    environment::{Environment, State, RevmResult},
+    environment::{Environment, State, RevmResult, ArbiterActions},
 };
 
 /// Manages simulations.
@@ -49,22 +48,8 @@ impl SimulationManager {
         todo!()
     }
 
-    /// adds an agent to an environment
-    pub fn add_agent(
-        &mut self,
-        agent: Agent<NotAttached>,
-        environment_label: String,
-    ) -> Result<()> {
-        match self.environments.get_mut(&environment_label) {
-            Some(environment) => {
-                environment.add_agent(agent);
-                Ok(())
-            }
-            None => Err(anyhow!("Environment does not exist.")),
-        }
-    }
     /// adds a strategy to an environment
-    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<RevmResult, ()>>) -> Result<()> {
+    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<RevmResult, ArbiterActions>>) -> Result<()> {
         match self.environments.get_mut(&environment_label) {
             Some(environment) => {
                 environment.add_strategy(strat);

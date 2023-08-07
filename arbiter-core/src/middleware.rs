@@ -23,7 +23,6 @@ use rand::{rngs::StdRng, SeedableRng};
 use revm::primitives::{CreateScheme, ExecutionResult, Output, TransactTo, TxEnv, B160, U256};
 
 use crate::{
-    agent::{Agent, NotAttached},
     environment::{Environment, RevmProvider},
     utils::{recast_address, revm_logs_to_ethers_logs},
 };
@@ -35,32 +34,6 @@ use crate::{
 pub struct RevmMiddleware {
     provider: Provider<RevmProvider>,
     wallet: Wallet<SigningKey>,
-}
-
-impl RevmMiddleware {
-    pub fn new(agent: &Agent<NotAttached>, environment: &Environment) -> Self {
-        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
-        environment
-            .event_broadcaster
-            .lock()
-            .unwrap()
-            .add_sender(event_sender);
-        let tx_sender = environment.tx_sender.clone();
-        let (result_sender, result_receiver) = crossbeam_channel::unbounded();
-        let revm_provider = RevmProvider {
-            tx_sender,
-            result_sender,
-            result_receiver,
-            event_receiver,
-        };
-        let provider = Provider::new(revm_provider);
-        let mut hasher = Sha256::new();
-        hasher.update(agent.name.as_bytes());
-        let seed = hasher.finalize();
-        let mut rng = StdRng::from_seed(seed.into());
-        let wallet = Wallet::new(&mut rng);
-        Self { provider, wallet }
-    }
 }
 
 #[async_trait::async_trait]

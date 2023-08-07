@@ -1,7 +1,7 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use artemis_core::types::Strategy;
+use artemis_core::{types::{Strategy, Executor}, engine::{self, Engine}};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ethers::core::types::U64;
 use ethers::{providers::{JsonRpcClient, ProviderError}, types::Filter, prelude::k256::sha2::{Digest, Sha256}};
@@ -20,7 +20,6 @@ use std::{
 };
 
 use crate::{
-    agent::{Agent, IsAttached, NotAttached},
     math::stochastic_process::SeededPoisson,
     middleware::RevmMiddleware,
     utils::{convert_uint_to_u64, revm_logs_to_ethers_logs},
@@ -61,12 +60,18 @@ pub struct Environment {
     pub(crate) tx_receiver: TxEnvReceiver,
     pub(crate) event_broadcaster: Arc<Mutex<EventBroadcaster>>,
     /// Clients (Agents) in the environment
-    pub agents: Vec<Agent<IsAttached<RevmMiddleware>>>,
+    // pub agents: Vec<Agent<IsAttached<RevmMiddleware>>>,
     /// Trying out a vector of artemis strategies
-    pub unique_strategies: Vec<Box<dyn Strategy<RevmResult, ()> + 'static>>,
+    // pub unique_strategies: Vec<Box<dyn Strategy<RevmResult, ArbiterActions> + 'static>>,
     pub(crate) seeded_poisson: SeededPoisson,
+    pub(crate) engine: Engine<RevmResult, ArbiterActions>,
 }
 
+#[derive(Clone, Debug)]
+pub enum ArbiterActions {
+    SendTx(TxEnv),
+    Alert,
+}
 
 // TODO: If the provider holds the connection then this can work better.
 /// revm provider
@@ -76,7 +81,6 @@ pub struct RevmProvider {
     pub(crate) result_sender: crossbeam_channel::Sender<RevmResult>,
     pub(crate) result_receiver: crossbeam_channel::Receiver<RevmResult>,
     pub(crate) event_receiver: crossbeam_channel::Receiver<Vec<ethers::types::Log>>,
-    // pub(crate) filter_receivers: HashMap<ethers::types::U256, crossbeam_channel::Receiver<Vec<ethers::types::Log>>>, // TODO: Use this to replace event_receivers so we can look for updates in specific filters
 }
 
 impl Debug for RevmProvider {
@@ -122,6 +126,24 @@ impl JsonRpcClient for RevmProvider {
     }
 }
 
+#[async_trait::async_trait]
+impl Executor<ArbiterActions> for Environment {
+    async fn execute(&self, arbiter: ArbiterActions) -> Result<()> {
+        // let (tx_sender, tx_receiver) = unbounded::<(ToTransact, TxEnv, Sender<RevmResult>)>();
+        let action = match arbiter {
+            ArbiterActions::SendTx(tx_env) => {
+                // self.tx_sender.send((true, tx_env, self.result_receiver))?;
+                todo!()
+            }
+            ArbiterActions::Alert => {
+                // self.tx_sender.send((false, TxEnv::default(), tx_sender))?;
+                todo!()
+            }
+        };
+        Ok(action)
+    }
+}
+
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
     pub(crate) fn new<S: Into<String>>(label: S, block_rate: f64, seed: u64) -> Self {
@@ -140,23 +162,16 @@ impl Environment {
             tx_sender,
             tx_receiver,
             event_broadcaster: Arc::new(Mutex::new(EventBroadcaster::new())),
-            agents: vec![],
+            // agents: vec![],
             seeded_poisson,
-            unique_strategies: vec![],
+            // unique_strategies: vec![],
+            engine: Engine::new(),
         }
     }
 
-    /// Creates a new [`Agent<RevmMiddleware`] with the given label.
-    // TODO: We need to make this the way to add agents to the environment.
-    // in `agent.rs` we have `new_simulation_agent` which should probably just be called from this function instead.
-    // OR agents can be created (without a connection?) and then added to the environment where they will gain a connection?
-    // Waylon: I like them being created without a connection and then added to the environment where they will gain a connection.
-    pub(crate) fn add_agent(&mut self, agent: Agent<NotAttached>) {
-        agent.attach_to_environment(self);
-    }
 
-    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<RevmResult, ()>>) {
-        self.unique_strategies.push(strategy);
+    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<RevmResult, ArbiterActions>>) {
+        self.engine.add_strategy(strategy);
     }
 
     // TODO: Run should now run the agents as well as the evm.
@@ -166,6 +181,7 @@ impl Environment {
         let event_broadcaster = self.event_broadcaster.clone();
 
         let mut seeded_poisson = self.seeded_poisson.clone();
+        
 
         let mut counter: usize = 0;
         self.state = State::Running;

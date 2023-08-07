@@ -36,37 +36,19 @@ fn arbiter_math() -> Result<()> {
     Ok(())
 }
 
-// TODO: Finish off a test like this.
-#[test]
-fn attach_agent() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    let agent = Agent::new(TEST_AGENT_NAME);
-    agent.attach_to_environment(environment);
-    assert_eq!(environment.agents[0].name, TEST_AGENT_NAME);
+pub(crate) struct DeployStrategy {
+    pub name: String,
+    pub client: Arc<RevmMiddleware>,
 }
 
-#[test]
-fn simulation_agent_wallet() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    let agent = Agent::new(TEST_AGENT_NAME);
-    agent.attach_to_environment(environment);
-    assert_eq!(
-        environment.agents[0].client.default_sender().unwrap(),
-        Address::from_str("0x09e12ce98726acd515b68f87f49dc2e5558f6a72").unwrap()
-    );
-}
+impl DeployStrategy {
+    pub fn new<S: Into<String>>(name: S, client: Arc<RevmMiddleware>) -> Self {
+        Self {
+            name: name.into(),
+            client,
+        }
+    }
 
-#[test]
-fn multiple_agent_addresses() {
-    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    let agent = Agent::new(TEST_AGENT_NAME);
-    agent.attach_to_environment(environment);
-    let agent2 = Agent::new(format!("new_{}", TEST_AGENT_NAME));
-    agent2.attach_to_environment(environment);
-    assert_ne!(
-        environment.agents[0].client.default_sender(),
-        environment.agents[1].client.default_sender()
-    );
 }
 
 // TODO: Test to see that we prvent agents with the same name from being added.
@@ -76,20 +58,20 @@ fn agent_name_collision() {
 }
 
 async fn deploy() -> Result<ArbiterToken<RevmMiddleware>> {
-    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    let agent = Agent::new(TEST_AGENT_NAME);
-    agent.attach_to_environment(environment);
-    environment.run();
-    Ok(ArbiterToken::deploy(
-        environment.agents[0].client.clone(),
-        (
-            TEST_ARG_NAME.to_string(),
-            TEST_ARG_SYMBOL.to_string(),
-            TEST_ARG_DECIMALS,
-        ),
-    )?
-    .send()
-    .await?)
+    todo!();
+    // let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
+    // environment.run();
+    // let deploye_strategy = DeployStrategy::new(TEST_AGENT_NAME, );
+    // Ok(ArbiterToken::deploy(
+    //     environment.agents[0].client.clone(),
+    //     (
+    //         TEST_ARG_NAME.to_string(),
+    //         TEST_ARG_SYMBOL.to_string(),
+    //         TEST_ARG_DECIMALS,
+    //     ),
+    // )?
+    // .send()
+    // .await?)
 }
 
 #[tokio::test]
