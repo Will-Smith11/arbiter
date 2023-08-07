@@ -6,14 +6,14 @@ use std::{
 };
 
 use anyhow::{Ok, Result};
+use artemis_core::types::Strategy;
 use ethers::{
     prelude::{FilterWatcher, Middleware, StreamExt},
     types::{Address, Filter, U64},
 };
 
-use crate::{agent::*, bindings::arbiter_token::*, environment::*, middleware::*};
+use crate::{bindings::{arbiter_token::*, self}, environment::*, middleware::{*, self}};
 use crate::{
-    agent::{tests::TEST_AGENT_NAME, *},
     bindings::arbiter_token::*,
     environment::{tests::TEST_ENV_LABEL, *},
     math::*,
@@ -39,6 +39,8 @@ fn arbiter_math() -> Result<()> {
 pub(crate) struct DeployStrategy {
     pub name: String,
     pub client: Arc<RevmMiddleware>,
+    pub arbiter_token: Arc<ArbiterToken<RevmMiddleware>>,
+    pub constructor_args: (String, String, u8),
 }
 
 impl DeployStrategy {
@@ -46,18 +48,31 @@ impl DeployStrategy {
         Self {
             name: name.into(),
             client,
+            arbiter_token: Arc::new(ArbiterToken),
+            constructor_args: (
+                TEST_ARG_NAME.to_string(),
+                TEST_ARG_SYMBOL.to_string(),
+                TEST_ARG_DECIMALS,
+            ),
         }
     }
-
 }
 
-// TODO: Test to see that we prvent agents with the same name from being added.
-#[test]
-fn agent_name_collision() {
-    todo!();
+#[async_trait::async_trait]
+impl Strategy<RevmResult, ArbiterActions> for DeployStrategy {
+    async fn sync_state(&mut self) -> Result<()> {
+        return Ok(());
+    }
+
+    async fn process_event(&mut self, event: RevmResult) -> Option<ArbiterActions> {
+        bindings::arbiter_token::arbiter_token::ArbiterToken::<middleware::RevmMiddleware>::deploy(self.client, ).await;
+        // bindings::arbiter_token::arbiter_token::ArbiterToken::<middleware::RevmMiddleware>::deploy(self.arbiter_token).await;
+    }
 }
+
 
 async fn deploy() -> Result<ArbiterToken<RevmMiddleware>> {
+    let binding = arbiter_token;
     todo!();
     // let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
     // environment.run();
@@ -133,10 +148,9 @@ async fn transact() -> Result<()> {
 #[tokio::test]
 async fn filter_watcher() -> Result<()> {
     let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    let agent = Agent::new(TEST_AGENT_NAME);
-    agent.attach_to_environment(environment);
+    let revm_middleware = RevmMiddleware::new(&environment);
     environment.run();
-    let client = environment.agents[0].client.clone();
+    let client = revm_middleware.provider().clone();
     let arbiter_token = deploy().await.unwrap();
     println!("arbiter token address: {:?}", arbiter_token.address());
     let filter = arbiter_token.approval_filter().filter;
@@ -166,10 +180,6 @@ async fn transaction_loop() -> Result<()> {
     let expected_tx_per_block = dist.sample();
 
     println!("expected_tx_per_block: {}", expected_tx_per_block);
-
-    let agent = Agent::new(TEST_AGENT_NAME);
-    env.add_agent(agent);
-    let agent = &env.agents[0];
     // tx_0 is the transaction that creates the token contract
     let arbiter_token = deploy().await?;
 

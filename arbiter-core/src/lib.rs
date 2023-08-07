@@ -2,7 +2,6 @@
 #![warn(unsafe_code)]
 //! Lib crate for describing simulations.
 
-pub mod agent;
 pub mod bindings;
 pub mod environment;
 pub mod manager;

@@ -102,29 +102,29 @@ pub struct RevmMiddleware {
     // connection: Connection,
 }
 
-// impl RevmMiddleware {
-//     pub fn new(agent: &Agent<NotAttached>, environment: &Environment) -> Self {
-//         let tx_sender = environment.socket.tx_sender.clone();
-//         let (result_sender, result_receiver) = crossbeam_channel::bounded(1);
-//         let connection = Connection {
-//             tx_sender,
-//             result_sender,
-//             result_receiver,
-//             event_sender: environment.socket.event_sender.clone(),
-//             filter_receivers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
-//         };
-//         let provider = Provider::new(connection);
-//         let mut hasher = Sha256::new();
-//         hasher.update(agent.name.as_bytes());
-//         let seed = hasher.finalize();
-//         let mut rng = StdRng::from_seed(seed.into());
-//         let wallet = Wallet::new(&mut rng);
-//         Self {
-//             provider,
-//             wallet,
-//         }
-//     }
-// }
+impl RevmMiddleware {
+    /// Creates a new Revm middleware.
+    pub fn new(environment: &Environment) -> Self {
+        let tx_sender = environment.socket.tx_sender.clone();
+        let (result_sender, result_receiver) = crossbeam_channel::bounded(1);
+        let connection = Connection {
+            tx_sender,
+            result_sender,
+            result_receiver,
+            event_sender: environment.socket.event_sender.clone(),
+            filter_receivers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        };
+        let provider = Provider::new(connection);
+        let hasher = Sha256::new();
+        let seed = hasher.finalize();
+        let mut rng = StdRng::from_seed(seed.into());
+        let wallet = Wallet::new(&mut rng);
+        Self {
+            provider,
+            wallet,
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Middleware for RevmMiddleware {
