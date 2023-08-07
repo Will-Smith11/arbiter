@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use anyhow::{anyhow, Result};
-use artemis_core::types::Strategy;
+use artemis_core::{types::Strategy, engine::{self, Engine}};
 
 use crate::{
     environment::{Environment, State, ArbiterActions, ArbiterEvents},
@@ -33,30 +33,20 @@ impl SimulationManager {
         environment_label: String,
         block_rate: f64,
         seed: u64,
+        engine: Engine<ArbiterEvents, ArbiterActions>,
     ) -> Result<()> {
         if self.environments.get(&environment_label).is_some() {
             return Err(anyhow!("Environment already exists."));
         }
         self.environments.insert(
             environment_label.clone(),
-            Environment::new(environment_label, block_rate, seed),
+            Environment::new(environment_label, block_rate, seed, engine),
         );
         Ok(())
     }
 
     pub fn _stop_environemt(self, _environment_label: String) -> Result<()> {
         todo!()
-    }
-
-    /// adds a strategy to an environment
-    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) -> Result<()> {
-        match self.environments.get_mut(&environment_label) {
-            Some(environment) => {
-                environment.add_strategy(strat);
-                Ok(())
-            }
-            None => Err(anyhow!("Environment does not exist.")),
-        }
     }
 
     /// Runs an environment that is in the [`SimulationManager`]'s list.
@@ -88,16 +78,19 @@ pub(crate) mod tests {
     #[test]
     fn add_environment() {
         let mut manager = SimulationManager::new();
+        let engine = Engine::new();
+
         let label = "test".to_string();
-        manager.add_environment(label.clone(), 1.0, 1).unwrap();
+        manager.add_environment(label.clone(), 1.0, 1, engine).unwrap();
         assert!(manager.environments.contains_key(&label));
     }
 
     #[test]
     fn run_environment() {
+        let engine = Engine::new();
         let mut manager = SimulationManager::new();
         let label = "test".to_string();
-        manager.add_environment(label.clone(), 1.0, 1).unwrap();
+        manager.add_environment(label.clone(), 1.0, 1, engine).unwrap();
         manager.run_environment(label.clone()).unwrap();
         assert_eq!(
             manager.environments.get(&label).unwrap().state,

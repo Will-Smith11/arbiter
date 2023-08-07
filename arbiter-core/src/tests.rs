@@ -1,15 +1,20 @@
 #![allow(missing_docs)]
-use std::sync::Arc;
+use std::{sync::Arc, task::Poll, time::Duration};
 use std::{
     str::FromStr,
 };
 
+use futures::stream::Stream;
 use anyhow::{Ok, Result};
-use artemis_core::types::Strategy;
+use artemis_core::{types::{Strategy, Collector}, engine::Engine, collectors::log_collector::LogCollector};
+use async_std::task::sleep;
 use ethers::{
     prelude::{FilterWatcher, Middleware, StreamExt},
-    types::{Address, Filter, U64},
+    types::{Address, U64},
 };
+use ethers_core::types::Filter;
+// use tokio::{stream, sync::futures};
+// use ethers::core::types::Filter;
 
 use crate::{bindings::{arbiter_token::*, self}, environment::*, middleware::{*, self}};
 use crate::{
@@ -36,6 +41,50 @@ fn arbiter_math() -> Result<()> {
     Ok(())
 }
 
+pub struct StartupStream {
+    pub max: u64,
+    pub current: Vec<ArbiterEvents>,
+}
+
+impl StartupStream {
+    pub fn new() -> Self {
+        let max = u64::MAX;
+        Self { max , current: vec![ArbiterEvents::StartupStream] }
+    }
+}
+
+#[async_trait::async_trait]
+impl Collector<ArbiterEvents> for StartupStream {
+    async fn get_event_stream(&self) -> Result<artemis_core::types::CollectorStream<'_, ArbiterEvents>> {
+        if self.state == State::Running {
+            let stream = StartupStream::iter(self.current.clone());
+            Ok(Box::pin(stream))
+        } else {
+            let stream = StartupStream::iter(self.current.clone());
+            Ok(Box::pin(stream))
+        }
+        
+    }
+}
+
+impl Stream for StartupStream {
+    type Item = ArbiterEvents;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        if self.current.is_empty() {
+            Poll::Ready(None)
+        } else {
+            let action = self.current.pop().unwrap();
+            let waker = cx.waker().clone();
+            async_std::task::spawn(async move {
+                sleep(Duration::from_millis(500)).await;
+                waker.wake();
+            });
+            Poll::Pending
+        }
+    }
+}
+
 pub(crate) struct DeployStrategy {
     pub name: String,
     pub client: Arc<RevmMiddleware>,
@@ -57,12 +106,12 @@ impl DeployStrategy {
 }
 
 #[async_trait::async_trait]
-impl Strategy<ArbiterActions, ArbiterActions> for DeployStrategy {
+impl Strategy<ArbiterEvents, ArbiterActions> for DeployStrategy {
     async fn sync_state(&mut self) -> Result<()> {
         return Ok(());
     }
 
-    async fn process_event(&mut self, event: ArbiterActions) -> Option<ArbiterActions> {
+    async fn process_event(&mut self, event: ArbiterEvents) -> Option<ArbiterActions> {
         let client_clone = self.client.clone();
         let constructor_clone = self.constructor_args.clone();
         let thing = ArbiterToken::deploy(client_clone, constructor_clone).unwrap();
@@ -72,13 +121,21 @@ impl Strategy<ArbiterActions, ArbiterActions> for DeployStrategy {
 
 
 async fn deploy() -> Result<()> {
-    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1);
-    
+    let engine = Engine::new();
+
+    let environment = &mut Environment::new(TEST_ENV_LABEL, 1.0, 1, engine);
+
     let client = Arc::new(RevmMiddleware::new(environment));
+
+
+    let filter = ethers_core::types::Filter::default();
+    let start_collector = StartupStream::new();
     let deployer_strategy = DeployStrategy::new(TEST_STRATEGY_NAME, client.clone());
 
+    environment.engine().add_collector(Box::new(start_collector));
+    environment.engine().add_strategy(Box::new(deployer_strategy));
 
-    environment.add_strategy(Box::new(deployer_strategy));
+
     environment.run().await;
     println!("Got here");
     Ok(())

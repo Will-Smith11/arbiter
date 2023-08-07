@@ -56,52 +56,6 @@ pub(crate) struct Socket {
     pub(crate) event_sender: EventBroadcaster,
 }
 
-/// The Proxy Pattern offers several benefits:
-/// Isolation: The proxy can isolate consumers from the details of the proxied type. If the Engine has quirks or complexities, the proxy can hide or manage these.
-/// Extended Behavior: The proxy can add behavior before or after forwarding a call to the original type. For example, it can log calls, manage lifecycles, or handle edge cases.
-/// Interface Adaption: If the Engine type has a problematic interface (like the consuming run method in this case), the proxy can provide a more convenient or idiomatic interface to callers.
-pub struct EngineProxy {
-    engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
-}
-
-impl EngineProxy {
-    /// Constructor function to instantiate a [`EngineProxy`].
-    pub fn new(engine: Engine<ArbiterEvents, ArbiterActions>) -> Self {
-        Self {
-            engine: Some(engine),
-        }
-    }
-
-    /// Adds a [`Strategy`] to the [`EngineProxy`].
-    pub fn add_strategy(&mut self, strategy: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) {
-        if let Some(engine) = &mut self.engine {
-            engine.add_strategy(strategy);
-        } else {
-            // Handle the case where the engine might be missing.
-            // For example, log an error or panic.
-            panic!("Engine is missing")
-        }
-    }
-
-    /// Adds an [`Executor`] to the [`EngineProxy`].
-    pub fn add_executor(&mut self, executor: Box<dyn Executor<ArbiterActions>>) {
-        if let Some(engine) = &mut self.engine {
-            engine.add_executor(executor);
-        } else {
-            panic!("Engine is missing")
-        }
-    }
-
-    /// Runs the [`EngineProxy`].
-    pub async fn run(&mut self) -> Result<()> {
-        if let Some(engine) = self.engine.take() {
-            let _result = engine.run().await.unwrap();
-            Ok(())
-        } else {
-            panic!("Engine is missing");
-        }
-    }
-}
 /// The environment struct.
 pub struct Environment {
     pub label: String,
@@ -109,7 +63,7 @@ pub struct Environment {
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
     pub(crate) socket: Socket,
     pub(crate) seeded_poisson: SeededPoisson,
-    pub(crate) engine: EngineProxy,
+    pub(crate) engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
 }
 
 /// The actions that the [`Environment`] can take
@@ -126,6 +80,7 @@ pub enum ArbiterActions {
 pub enum ArbiterEvents {
     TxResult(RevmResult),
     Start(ArbiterToken<RevmMiddleware>),
+    StartupStream
 }
 
 // TODO: This could be improved.
@@ -155,7 +110,7 @@ impl Executor<ArbiterActions> for Socket {
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
-    pub(crate) fn new<S: Into<String>>(label: S, block_rate: f64, seed: u64) -> Self {
+    pub(crate) fn new<S: Into<String>>(label: S, block_rate: f64, seed: u64, mut engine: Engine<ArbiterEvents, ArbiterActions>) -> Self {
         let mut evm = EVM::new();
         let db = CacheDB::new(EmptyDB {});
         evm.database(db);
@@ -170,7 +125,6 @@ impl Environment {
             tx_receiver,
             event_sender,
         };
-        let mut engine = EngineProxy::new(Engine::new());
         engine.add_executor(Box::new(socket.clone()));
         Self {
             label: label.into(),
@@ -178,13 +132,15 @@ impl Environment {
             evm,
             socket,
             seeded_poisson,
-            engine,
+            engine: Some(engine),
         }
     }
-
-    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) {
-        self.engine.add_strategy(strategy);
+    
+    // TODO: Get rid of this probably
+    pub fn engine(&mut self) -> &mut Engine<ArbiterEvents, ArbiterActions> {
+        self.engine.as_mut().unwrap()
     }
+
 
     // TODO: Run should now run the agents as well as the evm.
     pub(crate) async fn run(&mut self) {
@@ -192,7 +148,11 @@ impl Environment {
         let tx_receiver = self.socket.tx_receiver.clone();
         let event_broadcaster = self.socket.event_sender.clone();
         println!("Starting engine");
-        let _ = self.engine.run().await;
+        if let Some(engine) = self.engine.take() {
+            let _result = engine.run().await.unwrap();
+        } else {
+            panic!("Engine is missing");
+        }
         println!("Engine has finished running");
         let mut seeded_poisson = self.seeded_poisson.clone();
         
@@ -256,14 +216,16 @@ pub(crate) mod tests {
 
     #[test]
     fn new() {
-        let env = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1);
+        let engine = Engine::new();
+        let env = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1, engine);
         assert_eq!(env.label, TEST_ENV_LABEL);
         assert_eq!(env.state, State::Initialization);
     }
 
     #[test]
     fn run() {
-        let mut environment = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1);
+        let engine = Engine::new();
+        let mut environment = Environment::new(TEST_ENV_LABEL.to_string(), 1.0, 1, engine);
         environment.run();
         assert_eq!(environment.state, State::Running);
     }

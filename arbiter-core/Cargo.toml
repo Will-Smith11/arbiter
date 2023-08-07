@@ -7,6 +7,8 @@ edition = "2021"
 # Dependency configuration
 [dependencies]
 # For execution
+futures = "0.3.28"
+async-std = "1.12.0"
 bytes = "1.4.0"
 revm = "3.3.0"
 statrs = "0.16.0"
@@ -31,6 +33,7 @@ thiserror = "1.0.30"
 
 # Workspace dependencies
 ethers = { git = "https://github.com/primitivefinance/ethers-rs.git" }
+ethers-core = "2.0.8"
 artemis-core = { git = "https://github.com/paradigmxyz/artemis.git" }
 # ethers-middleware = { version = "2.0.4" }
 serde = { version = "1.0.163", features= ["derive"]}
