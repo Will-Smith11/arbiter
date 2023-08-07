@@ -3,7 +3,7 @@
 //! This module contains the middleware for the Revm simulation environment.
 //! Most of the middleware is essentially a placeholder, but it is necessary to have a middleware to work with bindings more efficiently.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, clone};
 use std::sync::Arc;
 use std::{fmt::Debug, time::Duration};
 

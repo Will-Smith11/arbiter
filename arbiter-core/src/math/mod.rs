@@ -1,6 +1,7 @@
 //! Math module.
 
 use ethers::types::U256;
+/// Has our poisson process.
 pub mod stochastic_process;
 
 /// Converts a float to a WAD fixed point prepared U256 number.

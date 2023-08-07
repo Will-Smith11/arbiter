@@ -1,10 +1,9 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use artemis_core::{types::{Strategy, Executor}, engine::{self, Engine}};
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use ethers::core::types::U64;
-use ethers::{providers::{JsonRpcClient, ProviderError}, types::Filter, prelude::k256::sha2::{Digest, Sha256}};
+use artemis_core::{types::{Strategy, Executor}, engine::Engine};
+use ethers::{core::types::U64, types::Address, prelude::ContractDeploymentTx};
+// use core::result::Result;
 // use crossbeam_channel::{unbounded, Receiver, Sender};
 use revm::{
     db::{CacheDB, EmptyDB},
@@ -13,25 +12,22 @@ use revm::{
 };
 // use artemis_core::types::Strategy;
 use anyhow::Result;
-use serde::{de::DeserializeOwned, Serialize};
-use std::{
-    fmt::Debug,
-    sync::{Arc, Mutex},
-    thread,
-};
+use serde::__private::de;
+use std::{fmt::Debug, sync::{Arc, Mutex}, rc::Rc, cell::RefCell};
 
 
 use crate::{
     math::stochastic_process::SeededPoisson,
-    middleware::RevmMiddleware,
-    utils::convert_uint_to_u64,
+    utils::convert_uint_to_u64, middleware::RevmMiddleware, bindings::arbiter_token::ArbiterToken,
 };
 use tokio::sync::broadcast;
 
 /// Result struct for the [`Environment`]. that wraps the [`ExecutionResult`] and the block number.
 #[derive(Debug, Clone)]
 pub struct RevmResult {
+    /// The result of the execution.
     pub result: ExecutionResult,
+    /// The block number of the execution.
     pub block_number: U64,
 }
 
@@ -53,13 +49,59 @@ pub enum State {
     Initialization,
 }
 
+#[derive(Clone)]
 pub(crate) struct Socket {
     pub(crate) tx_sender: TxSender,
-    tx_receiver: TxReceiver,
+    pub(crate) tx_receiver: TxReceiver,
     pub(crate) event_sender: EventBroadcaster,
 }
 
+/// The Proxy Pattern offers several benefits:
+/// Isolation: The proxy can isolate consumers from the details of the proxied type. If the Engine has quirks or complexities, the proxy can hide or manage these.
+/// Extended Behavior: The proxy can add behavior before or after forwarding a call to the original type. For example, it can log calls, manage lifecycles, or handle edge cases.
+/// Interface Adaption: If the Engine type has a problematic interface (like the consuming run method in this case), the proxy can provide a more convenient or idiomatic interface to callers.
+pub struct EngineProxy {
+    engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
+}
 
+impl EngineProxy {
+    /// Constructor function to instantiate a [`EngineProxy`].
+    pub fn new(engine: Engine<ArbiterEvents, ArbiterActions>) -> Self {
+        Self {
+            engine: Some(engine),
+        }
+    }
+
+    /// Adds a [`Strategy`] to the [`EngineProxy`].
+    pub fn add_strategy(&mut self, strategy: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) {
+        if let Some(engine) = &mut self.engine {
+            engine.add_strategy(strategy);
+        } else {
+            // Handle the case where the engine might be missing.
+            // For example, log an error or panic.
+            panic!("Engine is missing")
+        }
+    }
+
+    /// Adds an [`Executor`] to the [`EngineProxy`].
+    pub fn add_executor(&mut self, executor: Box<dyn Executor<ArbiterActions>>) {
+        if let Some(engine) = &mut self.engine {
+            engine.add_executor(executor);
+        } else {
+            panic!("Engine is missing")
+        }
+    }
+
+    /// Runs the [`EngineProxy`].
+    pub async fn run(&mut self) -> Result<()> {
+        if let Some(engine) = self.engine.take() {
+            let _result = engine.run().await.unwrap();
+            Ok(())
+        } else {
+            panic!("Engine is missing");
+        }
+    }
+}
 /// The environment struct.
 pub struct Environment {
     pub label: String,
@@ -67,27 +109,24 @@ pub struct Environment {
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
     pub(crate) socket: Socket,
     pub(crate) seeded_poisson: SeededPoisson,
-    pub(crate) engine: Engine<RevmResult, ArbiterActions>,
+    pub(crate) engine: EngineProxy,
 }
 
+/// The actions that the [`Environment`] can take
 #[derive(Clone, Debug)]
 pub enum ArbiterActions {
-    SendTx(TxEnv),
-    Alert,
+    SendTx(TxEnv, ResultSender),
+    // Alert(Address),
+    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>)
+
 }
 
-// TODO: If the provider holds the connection then this can work better.
-/// revm provider
-// #[derive(Clone)]
-// pub struct RevmProvider {
-//     pub(crate) tx_sender: TxEnvSender,
-//     pub(crate) result_sender: crossbeam_channel::Sender<RevmResult>,
-//     pub(crate) result_receiver: crossbeam_channel::Receiver<RevmResult>,
-//     pub(crate) event_receiver: crossbeam_channel::Receiver<Vec<ethers::types::Log>>,
-//     pub(crate) socket: Socket,
-//     pub agents: Vec<Agent<IsAttached<RevmMiddleware>>>,
-//     pub seeded_poisson: SeededPoisson,
-// }
+
+#[derive(Clone, Debug)]
+pub enum ArbiterEvents {
+    TxResult(RevmResult),
+    Start(ArbiterToken<RevmMiddleware>),
+}
 
 // TODO: This could be improved.
 impl Debug for Socket {
@@ -97,22 +136,22 @@ impl Debug for Socket {
 }
 
 #[async_trait::async_trait]
-impl Executor<ArbiterActions> for Environment {
-    async fn execute(&self, arbiter: ArbiterActions) -> Result<()> {
-        // let (tx_sender, tx_receiver) = unbounded::<(ToTransact, TxEnv, Sender<RevmResult>)>();
-        let action = match arbiter {
-            ArbiterActions::SendTx(tx_env) => {
-                // self.tx_sender.send((true, tx_env, self.result_receiver))?;
-                todo!()
+impl Executor<ArbiterActions> for Socket {
+    async fn execute(&self, _arbiter: ArbiterActions) -> Result<()> {
+        let action = match _arbiter {
+            ArbiterActions::SendTx(tx_env, sender) => {
+                self.tx_sender.send((true, tx_env, sender))?;
             }
-            ArbiterActions::Alert => {
-                // self.tx_sender.send((false, TxEnv::default(), tx_sender))?;
-                todo!()
+            ArbiterActions::Deploy(deploy_tx) => {
+                let thing = deploy_tx.send().await?;
+                print!("{:?}", thing);
+
             }
         };
         Ok(action)
     }
 }
+
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
@@ -131,33 +170,34 @@ impl Environment {
             tx_receiver,
             event_sender,
         };
-
+        let mut engine = EngineProxy::new(Engine::new());
+        engine.add_executor(Box::new(socket.clone()));
         Self {
             label: label.into(),
             state: State::Initialization,
             evm,
             socket,
             seeded_poisson,
-            // unique_strategies: vec![],
-            engine: Engine::new(),
+            engine,
         }
     }
 
-    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<RevmResult, ArbiterActions>>) {
+    pub(crate) fn add_strategy(&mut self, strategy: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) {
         self.engine.add_strategy(strategy);
     }
 
     // TODO: Run should now run the agents as well as the evm.
-    pub(crate) fn run(&mut self) {
+    pub(crate) async fn run(&mut self) {
         let mut evm = self.evm.clone();
         let tx_receiver = self.socket.tx_receiver.clone();
         let event_broadcaster = self.socket.event_sender.clone();
-
+        println!("Starting engine");
+        let _ = self.engine.run().await;
+        println!("Engine has finished running");
         let mut seeded_poisson = self.seeded_poisson.clone();
         
-
+        // self.state = State::Running;
         let mut counter: usize = 0;
-        self.state = State::Running;
 
         std::thread::spawn(move || {
             let mut expected_events_per_block = seeded_poisson.sample();
@@ -181,7 +221,7 @@ impl Environment {
                         Err(_) => panic!("failed"),
                     };
 
-                    event_broadcaster.send(crate::utils::revm_logs_to_ethers_logs(
+                    let _ = event_broadcaster.send(crate::utils::revm_logs_to_ethers_logs(
                         execution_result.logs(),
                     ));
                     let revm_result = RevmResult {

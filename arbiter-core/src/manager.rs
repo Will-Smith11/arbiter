@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use artemis_core::types::Strategy;
 
 use crate::{
-    environment::{Environment, State, RevmResult, ArbiterActions},
+    environment::{Environment, State, ArbiterActions, ArbiterEvents},
 };
 
 /// Manages simulations.
@@ -49,7 +49,7 @@ impl SimulationManager {
     }
 
     /// adds a strategy to an environment
-    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<RevmResult, ArbiterActions>>) -> Result<()> {
+    pub fn add_strategy_to_environment(&mut self, environment_label: String, strat: Box<dyn Strategy<ArbiterEvents, ArbiterActions>>) -> Result<()> {
         match self.environments.get_mut(&environment_label) {
             Some(environment) => {
                 environment.add_strategy(strat);
