@@ -1,20 +1,12 @@
 #![allow(missing_docs)]
 use std::{sync::Arc, task::Poll, time::Duration};
-use std::{
-    str::FromStr,
-};
+
 
 use futures::stream::Stream;
 use anyhow::{Ok, Result};
-use artemis_core::{types::{Strategy, Collector}, engine::Engine, collectors::log_collector::LogCollector};
-use async_std::task::sleep;
-use ethers::{
-    prelude::{FilterWatcher, Middleware, StreamExt},
-    types::{Address, U64},
-};
-use ethers_core::types::Filter;
-// use tokio::{stream, sync::futures};
-// use ethers::core::types::Filter;
+use artemis_core::{types::{Strategy, Collector, CollectorStream}, engine::Engine};
+use async_std::{task::sleep, sync::RwLock};
+
 
 use crate::{bindings::{arbiter_token::*, self}, environment::*, middleware::{*, self}};
 use crate::{
@@ -43,27 +35,26 @@ fn arbiter_math() -> Result<()> {
 
 pub struct StartupStream {
     pub max: u64,
-    pub current: Vec<ArbiterEvents>,
+    pub current: async_lock::RwLock<Vec<ArbiterEvents>>,  // Wrap the Vec in RefCell for interior mutability
 }
 
 impl StartupStream {
     pub fn new() -> Self {
         let max = u64::MAX;
-        Self { max , current: vec![ArbiterEvents::StartupStream] }
+        Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
     }
 }
 
 #[async_trait::async_trait]
 impl Collector<ArbiterEvents> for StartupStream {
-    async fn get_event_stream(&self) -> Result<artemis_core::types::CollectorStream<'_, ArbiterEvents>> {
-        if self.state == State::Running {
-            let stream = StartupStream::iter(self.current.clone());
-            Ok(Box::pin(stream))
-        } else {
-            let stream = StartupStream::iter(self.current.clone());
-            Ok(Box::pin(stream))
-        }
-        
+    async fn get_event_stream(&self) -> Result<CollectorStream<'_, ArbiterEvents>> {
+        // Clone the data
+        let cloned_data = self.current.read().await.clone();
+
+        // Convert the Vec to a Stream
+        let stream = futures::stream::iter(cloned_data.into_iter());
+
+        Ok(Box::pin(stream))
     }
 }
 
@@ -71,19 +62,25 @@ impl Stream for StartupStream {
     type Item = ArbiterEvents;
 
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-        if self.current.is_empty() {
-            Poll::Ready(None)
+        // Try writing without blocking
+        if let Some(mut current) = self.current.try_write() {
+            if current.is_empty() {
+                Poll::Ready(None)
+            } else {
+                let action = current.pop().unwrap();
+                let waker = cx.waker().clone();
+                async_std::task::spawn(async move {
+                    sleep(Duration::from_millis(500)).await;
+                    waker.wake();
+                });
+                Poll::Pending
+            }
         } else {
-            let action = self.current.pop().unwrap();
-            let waker = cx.waker().clone();
-            async_std::task::spawn(async move {
-                sleep(Duration::from_millis(500)).await;
-                waker.wake();
-            });
             Poll::Pending
         }
     }
 }
+
 
 pub(crate) struct DeployStrategy {
     pub name: String,

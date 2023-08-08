@@ -1,8 +1,10 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use artemis_core::{types::{Strategy, Executor}, engine::Engine};
-use ethers::{core::types::U64, types::Address, prelude::ContractDeploymentTx};
+use artemis_core::{types::{Executor, Collector, CollectorStream}, engine::Engine};
+use async_lock::RwLock;
+use ethers::{core::types::U64, prelude::ContractDeploymentTx};
+use futures::Stream;
 // use core::result::Result;
 // use crossbeam_channel::{unbounded, Receiver, Sender};
 use revm::{
@@ -12,8 +14,9 @@ use revm::{
 };
 // use artemis_core::types::Strategy;
 use anyhow::Result;
-use serde::__private::de;
-use std::{fmt::Debug, sync::{Arc, Mutex}, rc::Rc, cell::RefCell};
+use async_std::task::sleep;
+
+use std::{fmt::Debug, sync::Arc, time::Duration, task::Poll};
 
 
 use crate::{
@@ -56,14 +59,80 @@ pub(crate) struct Socket {
     pub(crate) event_sender: EventBroadcaster,
 }
 
+/// StartupStream struct for the [`Environment`].
+pub struct StartupStream {
+    /// capactiy of the stream.
+    pub max: u64,
+    /// thread safe wrapper for the stream.
+    pub current: async_lock::RwLock<Vec<ArbiterEvents>>,  // Wrap the Vec in RefCell for interior mutability
+}
+
+impl StartupStream {
+    /// Constructor function to instantiate a [`StartupStream`].
+    pub fn new() -> Self {
+        let max = u64::MAX;
+        Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
+    }
+}
+impl Default for StartupStream {
+    fn default() -> Self {
+        let max = u64::MAX;
+        Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
+    }
+}
+
+#[async_trait::async_trait]
+impl Collector<ArbiterEvents> for Environment {
+    async fn get_event_stream(&self) -> Result<CollectorStream<'_, ArbiterEvents>> {
+
+        if self.state == State::Running {
+            // Clone the data
+            let cloned_data = self.stream.current.read().await.clone();
+
+            // Convert the Vec to a Stream
+            let stream = futures::stream::iter(cloned_data.into_iter());
+
+            Ok(Box::pin(stream))
+        } else {
+            Err(anyhow::anyhow!("Environment is not running"))
+
+        }
+
+    }
+}
+
+impl Stream for StartupStream {
+    type Item = ArbiterEvents;
+
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        // Try writing without blocking
+        if let Some(mut current) = self.current.try_write() {
+            if current.is_empty() {
+                Poll::Ready(None)
+            } else {
+                let _action = current.pop().unwrap();
+                let waker = cx.waker().clone();
+                async_std::task::spawn(async move {
+                    sleep(Duration::from_millis(500)).await;
+                    waker.wake();
+                });
+                Poll::Pending
+            }
+        } else {
+            Poll::Pending
+        }
+    }
+}
 /// The environment struct.
 pub struct Environment {
+    /// The name of the environment.
     pub label: String,
     pub(crate) state: State,
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
     pub(crate) socket: Socket,
     pub(crate) seeded_poisson: SeededPoisson,
     pub(crate) engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
+    pub(crate) stream: StartupStream,
 }
 
 /// The actions that the [`Environment`] can take
@@ -80,7 +149,7 @@ pub enum ArbiterActions {
 pub enum ArbiterEvents {
     TxResult(RevmResult),
     Start(ArbiterToken<RevmMiddleware>),
-    StartupStream
+    StartupStream,
 }
 
 // TODO: This could be improved.
@@ -133,6 +202,7 @@ impl Environment {
             socket,
             seeded_poisson,
             engine: Some(engine),
+            stream: StartupStream::new(),
         }
     }
     
