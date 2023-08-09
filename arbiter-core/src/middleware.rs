@@ -1,13 +1,6 @@
 #![warn(missing_docs)]
-#![allow(clippy::all)]
-//! This module contains the middleware for the Revm simulation environment.
-//! Most of the middleware is essentially a placeholder, but it is necessary to have a middleware to work with bindings more efficiently.
 
-use std::{collections::HashMap, clone};
-use std::sync::Arc;
-use std::{fmt::Debug, time::Duration};
-
-use ethers::providers::JsonRpcClient;
+use crate::environment::{Environment, EventBroadcaster, ResultReceiver, ResultSender, TxSender};
 use ethers::{
     prelude::{
         k256::{
@@ -17,47 +10,40 @@ use ethers::{
         pending_transaction::PendingTxState,
         ProviderError,
     },
-    providers::{FilterKind, FilterWatcher, Middleware, PendingTransaction, Provider},
+    providers::{
+        FilterKind, FilterWatcher, JsonRpcClient, Middleware, PendingTransaction, Provider,
+    },
     signers::{Signer, Wallet},
-    types::{transaction::eip2718::TypedTransaction, Address, BlockId, Bytes, Filter, Log},
+    types::{
+        transaction::eip2718::TypedTransaction, Address, BlockId, Bytes, Filter, FilteredParams,
+        Log,
+    },
 };
 use rand::{rngs::StdRng, SeedableRng};
-use revm::primitives::{CreateScheme, ExecutionResult, Output, TransactTo, TxEnv, B160, U256, B256};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-
-use crate::environment::{ResultReceiver, ResultSender, TxSender, EventBroadcaster};
-use crate::{
-    environment::Environment,
-    utils::{recast_address, revm_logs_to_ethers_logs},
+use revm::primitives::{CreateScheme, ExecutionResult, Output, TransactTo, TxEnv, B160, U256};
+use serde::{de::DeserializeOwned, Serialize};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
+#[derive(Debug)]
 pub struct Connection {
     pub(crate) tx_sender: TxSender,
     pub(crate) result_sender: ResultSender,
     pub(crate) result_receiver: ResultReceiver,
-    pub(crate) event_sender: EventBroadcaster,
+    event_broadcaster: Arc<Mutex<EventBroadcaster>>,
     filter_receivers: Arc<tokio::sync::Mutex<HashMap<ethers::types::U256, FilterReceiver>>>,
 }
 
 #[derive(Debug)]
 pub(crate) struct FilterReceiver {
     pub(crate) filter: Filter,
-    pub(crate) receiver: tokio::sync::broadcast::Receiver<Vec<ethers::types::Log>>,
+    pub(crate) receiver: crossbeam_channel::Receiver<Vec<ethers::types::Log>>,
 }
 
-impl Debug for Connection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Connection")
-            .field("tx_sender", &"TxSender")
-            .field("result_sender", &"ResultSender")
-            .field("result_receiver", &"ResultReceiver")
-            .field("filter_receivers", &"HashMap<ethers::types::U256, FilterReceiver>")
-            .finish()
-    }
-}
-
-// TODO: This below seems needlessly clunky. There is a lot of serialize/deserialize and I bet we can avoid it and avoid a match all together.
 #[async_trait::async_trait]
 impl JsonRpcClient for Connection {
     type Error = ProviderError;
@@ -69,17 +55,23 @@ impl JsonRpcClient for Connection {
     ) -> Result<R, ProviderError> {
         match method {
             "eth_getFilterChanges" => {
-                // TODO: Store a Map of filters with their IDs as keys. The ID should take into account the agent that is listening to it as well so that multiple agents can listen to the same event stream!
                 let value = serde_json::to_value(&params).unwrap();
                 let str = value.as_array().unwrap()[0].as_str().unwrap();
                 let id = ethers::types::U256::from_str_radix(str, 16).unwrap();
-                println!("id: {:?}", id);
-                let filter_receiver = self.filter_receivers.clone();
-                let mut filter_receiver = filter_receiver.lock().await;
-                let filter_receiver = filter_receiver.get_mut(&id).unwrap();
-                println!("filter_receiver: {:?}", filter_receiver);
-                let logs = filter_receiver.receiver.recv().await.unwrap();
-                println!("logs: {:?}", logs);
+                let mut filter_receivers = self.filter_receivers.lock().await;
+                let filter_receiver = filter_receivers.get_mut(&id).unwrap();
+                let mut logs = vec![];
+                let filtered_params = FilteredParams::new(Some(filter_receiver.filter.clone()));
+                while let Ok(received_logs) = filter_receiver.receiver.recv() {
+                    for log in received_logs {
+                        if filtered_params.filter_address(&log)
+                            && filtered_params.filter_topics(&log)
+                        {
+                            logs.push(log);
+                        }
+                    }
+                    break;
+                }
                 let logs_str = serde_json::to_string(&logs).unwrap();
                 let logs_deserializeowned: R = serde_json::from_str(&logs_str)?;
                 return Ok(logs_deserializeowned);
@@ -91,27 +83,22 @@ impl JsonRpcClient for Connection {
     }
 }
 
-// TODO: Refactor the connection and channels slightly to be more intuitive. For instance, the middleware may not really need to own a connection, but input one to set up everything else?
-/// The Revm middleware struct.
-/// This struct is modular with ther ethers.rs middleware, and is used to connect the Revm environment in memory rather than over the network.
 #[derive(Debug)]
 pub struct RevmMiddleware {
     provider: Provider<Connection>,
     wallet: Wallet<SigningKey>,
-    // filter_receivers: Mutex<HashMap<ethers::types::U256, FilterReceiver>>,
-    // connection: Connection,
 }
 
 impl RevmMiddleware {
     /// Creates a new Revm middleware.
     pub fn new(environment: &Environment) -> Self {
         let tx_sender = environment.socket.tx_sender.clone();
-        let (result_sender, result_receiver) = crossbeam_channel::bounded(1);
+        let (result_sender, result_receiver) = crossbeam_channel::unbounded();
         let connection = Connection {
             tx_sender,
             result_sender,
             result_receiver,
-            event_sender: environment.socket.event_sender.clone(),
+            event_broadcaster: Arc::clone(&environment.socket.event_broadcaster),
             filter_receivers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         };
         let provider = Provider::new(connection);
@@ -119,20 +106,14 @@ impl RevmMiddleware {
         let seed = hasher.finalize();
         let mut rng = StdRng::from_seed(seed.into());
         let wallet = Wallet::new(&mut rng);
-        Self {
-            provider,
-            wallet,
-        }
+        Self { provider, wallet }
     }
 }
 
 #[async_trait::async_trait]
 impl Middleware for RevmMiddleware {
-    /// The JSON-RPC client type at the bottom of the stack
     type Provider = Connection;
-    /// Error type returned by most operations
-    type Error = ProviderError; //RevmMiddlewareError;
-    /// The next-lower middleware in the middleware stack
+    type Error = ProviderError;
     type Inner = Self;
 
     fn inner(&self) -> &Self::Inner {
@@ -147,7 +128,6 @@ impl Middleware for RevmMiddleware {
         Some(self.wallet.address())
     }
 
-    /// sending a transaction to revm is the same as committing a transaction and it won't return the output of the call but will cause logs to echo. Deploys are ran through here as well.
     async fn send_transaction<T: Into<TypedTransaction> + Send + Sync>(
         &self,
         tx: T,
@@ -174,9 +154,15 @@ impl Middleware for RevmMiddleware {
             nonce: None,
             access_list: Vec::new(),
         };
-        self.provider().as_ref()
+        self.provider()
+            .as_ref()
             .tx_sender
-            .send((true, tx_env.clone(), self.provider().as_ref().result_sender.clone())).unwrap();
+            .send((
+                true,
+                tx_env.clone(),
+                self.provider().as_ref().result_sender.clone(),
+            ))
+            .unwrap();
 
         let revm_result = self.provider().as_ref().result_receiver.recv().unwrap();
 
@@ -206,7 +192,6 @@ impl Middleware for RevmMiddleware {
         }
     }
 
-    /// Makes a call to revm that will not commit a state change to the DB. Can be used for a mock transaction
     async fn call(
         &self,
         tx: &TypedTransaction,
@@ -233,16 +218,20 @@ impl Middleware for RevmMiddleware {
             nonce: None,
             access_list: Vec::new(),
         };
-        // TODO: Modify this to work for calls/deploys
-        self.provider().as_ref()
+        self.provider()
+            .as_ref()
             .tx_sender
-            .send((false, tx_env.clone(), self.provider().as_ref().result_sender.clone())).unwrap();
-
+            .send((
+                false,
+                tx_env.clone(),
+                self.provider().as_ref().result_sender.clone(),
+            ))
+            .unwrap();
         let revm_result = self.provider().as_ref().result_receiver.recv().unwrap();
         let output = match revm_result.result.clone() {
             ExecutionResult::Success { output, .. } => output,
-            ExecutionResult::Revert { output, .. } => panic!("Failed due to revert: {:?}", output),
-            ExecutionResult::Halt { reason, .. } => panic!("Failed due to halt: {:?}", reason),
+            ExecutionResult::Revert { output, .. } => panic!("Failed due to revert: {:?}", output), // TODO: We can throw an error here instead and pause the environment if need be.
+            ExecutionResult::Halt { reason, .. } => panic!("Failed due to halt: {:?}", reason), // TODO: We can throw an error here instead and pause the environment if need be.
         };
         match output {
             Output::Create(bytes, ..) => {
@@ -258,9 +247,6 @@ impl Middleware for RevmMiddleware {
         todo!("we should be able to get logs.")
     }
 
-    // NOTES: It might be good to have individual channels for the EVM to send events to so that an agent can install a filter and the logs can be filtered by the EVM itself.
-    // This could be handled similarly to how broadcasts are done now and maybe nothing there needs to change except for attaching a filter to the event channels.
-    // It would be good to also pass to a separate thread to do broadcasting if we aren't already doing that so that the EVM can process while events are being sent out.
     async fn new_filter(
         &self,
         filter: FilterKind<'_>,
@@ -278,11 +264,23 @@ impl Middleware for RevmMiddleware {
         hasher.update(serde_json::to_string(&args).unwrap());
         let hash = hasher.finalize();
         let id = ethers::types::U256::from(ethers::types::H256::from_slice(&hash).as_bytes());
+        let (event_sender, event_receiver) = crossbeam_channel::unbounded();
         let filter_receiver = FilterReceiver {
             filter,
-            receiver: self.provider.as_ref().event_sender.subscribe(),
+            receiver: event_receiver,
         };
-        self.provider().as_ref().filter_receivers.lock().await.insert(id, filter_receiver);
+        self.provider()
+            .as_ref()
+            .event_broadcaster
+            .lock()
+            .unwrap()
+            .add_sender(event_sender);
+        self.provider()
+            .as_ref()
+            .filter_receivers
+            .lock()
+            .await
+            .insert(id, filter_receiver);
         Ok(id)
     }
 
@@ -293,4 +291,57 @@ impl Middleware for RevmMiddleware {
         let id = self.new_filter(FilterKind::Logs(filter)).await?;
         Ok(FilterWatcher::new(id, self.provider()).interval(Duration::ZERO))
     }
+}
+
+/// Recast a logs from Revm into the ethers.rs Log type.
+/// # Arguments
+/// * `revm_logs` - Logs from Revm. (Vec<revm::primitives::Log>)
+/// # Returns
+/// * `Vec<ethers::core::types::Log>` - Logs recasted into ethers.rs Log type.
+#[inline]
+pub fn revm_logs_to_ethers_logs(
+    revm_logs: Vec<revm::primitives::Log>,
+) -> Vec<ethers::core::types::Log> {
+    let mut logs: Vec<ethers::core::types::Log> = vec![];
+    for revm_log in revm_logs {
+        let topics = revm_log.topics.into_iter().map(recast_b256).collect();
+        let log = ethers::core::types::Log {
+            address: recast_address(revm_log.address),
+            topics,
+            data: ethers::core::types::Bytes::from(revm_log.data),
+            block_hash: None,
+            block_number: None,
+            transaction_hash: None,
+            transaction_index: None,
+            log_index: None,
+            transaction_log_index: None,
+            log_type: None,
+            removed: None,
+        };
+        logs.push(log);
+    }
+    logs
+}
+
+// Certainly will go away with alloy-types
+/// Recast a B160 into an Address type
+/// # Arguments
+/// * `address` - B160 to recast. (B160)
+/// # Returns
+/// * `Address` - Recasted Address.
+#[inline]
+pub fn recast_address(address: B160) -> Address {
+    let temp: [u8; 20] = address.as_bytes().try_into().unwrap();
+    Address::from(temp)
+}
+
+/// Recast a B256 into an H256 type
+/// # Arguments
+/// * `input` - B256 to recast. (B256)  
+/// # Returns
+/// * `H256` - Recasted H256.
+#[inline]
+pub fn recast_b256(input: revm::primitives::B256) -> ethers::types::H256 {
+    let temp: [u8; 32] = input.as_bytes().try_into().unwrap();
+    ethers::types::H256::from(temp)
 }
