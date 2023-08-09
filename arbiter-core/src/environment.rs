@@ -141,7 +141,7 @@ impl Environment {
     }
 
     // TODO: Run should now run the agents as well as the evm.
-    pub(crate) async fn run(&mut self) {
+    pub(crate) async fn run(&mut self) -> std::thread::JoinHandle<()> {
         let mut evm = self.evm.clone();
         let tx_receiver = self.socket.tx_receiver.clone();
         let event_broadcaster = self.socket.event_broadcaster.clone();
@@ -215,7 +215,7 @@ impl Environment {
                     }
                 }
             }
-        });
+        })
     }
 }
 

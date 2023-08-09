@@ -3,9 +3,9 @@
 
 // TODO: Replace prints with better logging?
 
-use std::error::Error;
 use clap::{command, CommandFactory, Parser, Subcommand};
 use eyre::Result;
+use std::error::Error;
 use thiserror::Error;
 
 mod bind;

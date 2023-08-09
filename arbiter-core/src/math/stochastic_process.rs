@@ -39,7 +39,6 @@ impl SeededPoisson {
 #[cfg(test)]
 mod tests {
 
-
     use super::*;
 
     #[test]
