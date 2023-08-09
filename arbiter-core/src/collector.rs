@@ -2,7 +2,7 @@ use std::sync::Arc;
 use artemis_core::types::Collector;
 use crate::{middleware::RevmMiddleware, environment::ArbiterEvents};
 
-
+/// Idea here is to have a collector that can be used to collect events from the revm middleware.
 struct RevmCollector {
     client: Arc<RevmMiddleware>,
 }

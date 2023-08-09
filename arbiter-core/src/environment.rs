@@ -4,7 +4,7 @@
 use artemis_core::engine::Engine;
 use ethers::{
     core::types::{Log, U64},
-    prelude::ContractDeploymentTx,
+    prelude::ContractDeploymentTx, types::Transaction,
 };
 use ethers_core::types::transaction::eip2718::TypedTransaction;
 use revm::{
@@ -229,7 +229,7 @@ impl EventBroadcaster {
 /// The actions that the [`Environment`] can take
 #[derive(Clone, Debug)]
 pub enum ArbiterActions {
-    SendTx(TypedTransaction, ResultSender),
+    SendTx(Transaction, ResultSender),
     // Alert(Address),
     Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>),
     SetPrice(U256),
