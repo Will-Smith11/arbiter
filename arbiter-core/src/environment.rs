@@ -5,8 +5,7 @@ use artemis_core::{types::{Executor, Collector, CollectorStream}, engine::Engine
 use async_lock::RwLock;
 use ethers::{core::types::U64, prelude::ContractDeploymentTx};
 use futures::Stream;
-// use core::result::Result;
-// use crossbeam_channel::{unbounded, Receiver, Sender};
+use tracing::info;
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{ExecutionResult, TxEnv, U256},
@@ -162,13 +161,16 @@ impl Debug for Socket {
 #[async_trait::async_trait]
 impl Executor<ArbiterActions> for Socket {
     async fn execute(&self, _arbiter: ArbiterActions) -> Result<()> {
+        println!("Socket Executor: Executing the actions");
         let action = match _arbiter {
             ArbiterActions::SendTx(tx_env, sender) => {
+                println!("Matched on send tx");
                 self.tx_sender.send((true, tx_env, sender))?;
             }
             ArbiterActions::Deploy(deploy_tx) => {
-                let thing = deploy_tx.send().await?;
-                print!("{:?}", thing);
+                println!("Matched on deploy");
+                let arbiter_token = deploy_tx.send().await.unwrap();
+                println!("\n deployed the contract {:?}", arbiter_token);
 
             }
         };
@@ -218,11 +220,17 @@ impl Environment {
         let tx_receiver = self.socket.tx_receiver.clone();
         let event_broadcaster = self.socket.event_sender.clone();
         println!("Starting engine");
+
         if let Some(engine) = self.engine.take() {
-            let _result = engine.run().await.unwrap();
+            if let Ok(mut set) = engine.run().await {
+                while let Some(res) = set.join_next().await {
+                    println!("res: {:?}", res);
+                }
+            }
         } else {
             panic!("Engine is missing");
         }
+
         println!("Engine has finished running");
         let mut seeded_poisson = self.seeded_poisson.clone();
         

@@ -8,12 +8,14 @@ edition = "2021"
 [dependencies]
 # For execution
 futures = "0.3.28"
-async-lock = "2.0.4"
+async-lock = "2.7.0"
 async-std = "1.12.0"
 bytes = "1.4.0"
 revm = "3.3.0"
 statrs = "0.16.0"
 crossbeam-channel = "0.5.8"
+tracing = "0.1.37"
+tracing-subscriber = "0.3.17"
 
 # For price simulation
 rand = "0.8.5"

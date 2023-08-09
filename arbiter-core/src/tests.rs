@@ -3,7 +3,7 @@ use std::{sync::Arc, task::Poll, time::Duration};
 
 
 use futures::stream::Stream;
-use anyhow::{Ok, Result};
+use anyhow::{Result};
 use artemis_core::{types::{Strategy, Collector, CollectorStream}, engine::Engine};
 use async_std::{task::sleep, sync::RwLock};
 
@@ -42,6 +42,12 @@ impl StartupStream {
     pub fn new() -> Self {
         let max = u64::MAX;
         Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
+    }
+}
+
+impl Default for StartupStream {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -108,11 +114,25 @@ impl Strategy<ArbiterEvents, ArbiterActions> for DeployStrategy {
         return Ok(());
     }
 
-    async fn process_event(&mut self, event: ArbiterEvents) -> Option<ArbiterActions> {
+    async fn process_event(&mut self, event: ArbiterEvents) -> Vec<ArbiterActions> {
+        println!("Got event: {:?} in proccess event", event);
         let client_clone = self.client.clone();
         let constructor_clone = self.constructor_args.clone();
-        let thing = ArbiterToken::deploy(client_clone, constructor_clone).unwrap();
-        Some(ArbiterActions::Deploy(thing))
+        if let ArbiterEvents::StartupStream = event {
+            match ArbiterToken::deploy(client_clone, constructor_clone) {
+                Ok(deploy_tx) => {
+                    println!("returning deploy tx");
+                    return vec![ArbiterActions::Deploy(deploy_tx)];
+                }
+                Err(e) => {
+                    println!("Error deploying contract: {:?}", e);
+                    return vec![];
+                }            
+            }
+        }
+        else {
+            return vec![];
+        }
     }
 }
 
@@ -126,7 +146,7 @@ async fn deploy() -> Result<()> {
 
 
     let filter = ethers_core::types::Filter::default();
-    let start_collector = StartupStream::new();
+    let start_collector = StartupStream::default();
     let deployer_strategy = DeployStrategy::new(TEST_STRATEGY_NAME, client.clone());
 
     environment.engine().add_collector(Box::new(start_collector));
@@ -150,6 +170,7 @@ async fn deploy() -> Result<()> {
 
 #[tokio::test]
 async fn test_deploy() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let arbiter_token = deploy().await?;
     // println!("{:?}", arbiter_token);
     // assert_eq!(
