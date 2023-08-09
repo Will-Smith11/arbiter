@@ -1,9 +1,9 @@
 #![warn(missing_docs)]
 #![warn(unsafe_code)]
 
-use artemis_core::{types::{Executor, Collector, CollectorStream}, engine::Engine};
+use artemis_core::{types::{Executor}, engine::Engine};
 use async_lock::RwLock;
-use ethers::{core::types::U64, prelude::ContractDeploymentTx};
+use ethers::{core::types::U64, prelude::ContractDeploymentTx, types::Filter, providers::Middleware};
 use futures::Stream;
 use tracing::info;
 use revm::{
@@ -13,16 +13,15 @@ use revm::{
 };
 // use artemis_core::types::Strategy;
 use anyhow::Result;
-use async_std::task::sleep;
 
-use std::{fmt::Debug, sync::Arc, time::Duration, task::Poll};
+use std::{fmt::Debug, sync::Arc};
 
 
 use crate::{
     math::stochastic_process::SeededPoisson,
     utils::convert_uint_to_u64, middleware::RevmMiddleware, bindings::arbiter_token::ArbiterToken,
 };
-use tokio::sync::broadcast;
+use tokio::{sync::broadcast, task::JoinSet};
 
 /// Result struct for the [`Environment`]. that wraps the [`ExecutionResult`] and the block number.
 #[derive(Debug, Clone)]
@@ -58,80 +57,15 @@ pub(crate) struct Socket {
     pub(crate) event_sender: EventBroadcaster,
 }
 
-/// StartupStream struct for the [`Environment`].
-pub struct StartupStream {
-    /// capactiy of the stream.
-    pub max: u64,
-    /// thread safe wrapper for the stream.
-    pub current: async_lock::RwLock<Vec<ArbiterEvents>>,  // Wrap the Vec in RefCell for interior mutability
-}
-
-impl StartupStream {
-    /// Constructor function to instantiate a [`StartupStream`].
-    pub fn new() -> Self {
-        let max = u64::MAX;
-        Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
-    }
-}
-impl Default for StartupStream {
-    fn default() -> Self {
-        let max = u64::MAX;
-        Self { max , current: RwLock::new(vec![ArbiterEvents::StartupStream]) }
-    }
-}
-
-#[async_trait::async_trait]
-impl Collector<ArbiterEvents> for Environment {
-    async fn get_event_stream(&self) -> Result<CollectorStream<'_, ArbiterEvents>> {
-
-        if self.state == State::Running {
-            // Clone the data
-            let cloned_data = self.stream.current.read().await.clone();
-
-            // Convert the Vec to a Stream
-            let stream = futures::stream::iter(cloned_data.into_iter());
-
-            Ok(Box::pin(stream))
-        } else {
-            Err(anyhow::anyhow!("Environment is not running"))
-
-        }
-
-    }
-}
-
-impl Stream for StartupStream {
-    type Item = ArbiterEvents;
-
-    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
-        // Try writing without blocking
-        if let Some(mut current) = self.current.try_write() {
-            if current.is_empty() {
-                Poll::Ready(None)
-            } else {
-                let _action = current.pop().unwrap();
-                let waker = cx.waker().clone();
-                async_std::task::spawn(async move {
-                    sleep(Duration::from_millis(500)).await;
-                    waker.wake();
-                });
-                Poll::Pending
-            }
-        } else {
-            Poll::Pending
-        }
-    }
-}
 /// The environment struct.
 pub struct Environment {
     /// The name of the environment.
     pub label: String,
     pub(crate) state: State,
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
-    pub(crate) socket: Socket,
+    pub(crate) socket: Arc<Socket>,
     pub(crate) seeded_poisson: SeededPoisson,
     pub(crate) engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
-    pub(crate) stream: StartupStream,
 }
 
 /// The actions that the [`Environment`] can take
@@ -139,42 +73,22 @@ pub struct Environment {
 pub enum ArbiterActions {
     SendTx(TxEnv, ResultSender),
     // Alert(Address),
-    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>)
-
+    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>),
+    SetPrice(U256),
+    Mint(u128, ArbiterToken<RevmMiddleware>, Arc<RevmMiddleware>),
 }
 
 
 #[derive(Clone, Debug)]
 pub enum ArbiterEvents {
     TxResult(RevmResult),
-    Start(ArbiterToken<RevmMiddleware>),
-    StartupStream,
+    Event(Vec<ethers::types::Log>),
 }
 
-// TODO: This could be improved.
+// // TODO: This could be improved.
 impl Debug for Socket {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Socket").finish()
-    }
-}
-
-#[async_trait::async_trait]
-impl Executor<ArbiterActions> for Socket {
-    async fn execute(&self, _arbiter: ArbiterActions) -> Result<()> {
-        println!("Socket Executor: Executing the actions");
-        let action = match _arbiter {
-            ArbiterActions::SendTx(tx_env, sender) => {
-                println!("Matched on send tx");
-                self.tx_sender.send((true, tx_env, sender))?;
-            }
-            ArbiterActions::Deploy(deploy_tx) => {
-                println!("Matched on deploy");
-                let arbiter_token = deploy_tx.send().await.unwrap();
-                println!("\n deployed the contract {:?}", arbiter_token);
-
-            }
-        };
-        Ok(action)
     }
 }
 
@@ -191,12 +105,11 @@ impl Environment {
 
         let (tx_sender, tx_receiver) = crossbeam_channel::bounded(16);
         let (event_sender, _) = tokio::sync::broadcast::channel(16);
-        let socket = Socket {
+        let socket = Arc::new(Socket {
             tx_sender,
             tx_receiver,
             event_sender,
-        };
-        engine.add_executor(Box::new(socket.clone()));
+        });
         Self {
             label: label.into(),
             state: State::Initialization,
@@ -204,13 +117,29 @@ impl Environment {
             socket,
             seeded_poisson,
             engine: Some(engine),
-            stream: StartupStream::new(),
         }
     }
     
     // TODO: Get rid of this probably
+    /// returns mutable engine
     pub fn engine(&mut self) -> &mut Engine<ArbiterEvents, ArbiterActions> {
         self.engine.as_mut().unwrap()
+    }
+
+
+    pub(crate) async fn start_engine(&mut self) -> JoinSet<()> {
+        println!("Starting engine");
+        if let Some(engine) = self.engine.take() {
+            if let Ok(set) = engine.run().await {
+                println!("Engine has finished starting");
+                set
+            }
+            else {
+                panic!("Engine failed to start");
+            }
+        } else {
+            panic!("Engine is missing");
+        }
     }
 
 
@@ -219,19 +148,7 @@ impl Environment {
         let mut evm = self.evm.clone();
         let tx_receiver = self.socket.tx_receiver.clone();
         let event_broadcaster = self.socket.event_sender.clone();
-        println!("Starting engine");
 
-        if let Some(engine) = self.engine.take() {
-            if let Ok(mut set) = engine.run().await {
-                while let Some(res) = set.join_next().await {
-                    println!("res: {:?}", res);
-                }
-            }
-        } else {
-            panic!("Engine is missing");
-        }
-
-        println!("Engine has finished running");
         let mut seeded_poisson = self.seeded_poisson.clone();
         
         // self.state = State::Running;

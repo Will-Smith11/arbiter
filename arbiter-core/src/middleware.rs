@@ -36,7 +36,7 @@ pub struct Connection {
     pub(crate) tx_sender: TxSender,
     pub(crate) result_sender: ResultSender,
     pub(crate) result_receiver: ResultReceiver,
-    event_sender: EventBroadcaster,
+    pub(crate) event_sender: EventBroadcaster,
     filter_receivers: Arc<tokio::sync::Mutex<HashMap<ethers::types::U256, FilterReceiver>>>,
 }
 
