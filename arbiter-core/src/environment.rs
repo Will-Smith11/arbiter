@@ -6,6 +6,7 @@ use ethers::{
     core::types::{Log, U64},
     prelude::ContractDeploymentTx,
 };
+use ethers_core::types::transaction::eip2718::TypedTransaction;
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{ExecutionResult, TxEnv, U256},
@@ -70,21 +71,7 @@ pub struct Environment {
     pub(crate) pausevar: Arc<(Mutex<()>, Condvar)>,
 }
 
-/// The actions that the [`Environment`] can take
-#[derive(Clone, Debug)]
-pub enum ArbiterActions {
-    SendTx(TxEnv, ResultSender),
-    // Alert(Address),
-    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>),
-    SetPrice(U256),
-    Mint(u128, ArbiterToken<RevmMiddleware>, Arc<RevmMiddleware>),
-}
 
-#[derive(Clone, Debug)]
-pub enum ArbiterEvents {
-    TxResult(RevmResult),
-    Event(Vec<ethers::types::Log>),
-}
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
@@ -155,7 +142,7 @@ impl Environment {
         let state = Arc::clone(&self.state);
         let pausevar = Arc::clone(&self.pausevar);
 
-        thread::spawn(move || {
+        let handle = thread::spawn(move || {
             let mut expected_events_per_block = seeded_poisson.sample();
             loop {
                 match state.load(std::sync::atomic::Ordering::Relaxed) {
@@ -215,7 +202,8 @@ impl Environment {
                     }
                 }
             }
-        })
+        });
+        handle
     }
 }
 
@@ -236,6 +224,22 @@ impl EventBroadcaster {
             sender.send(logs.clone()).unwrap();
         }
     }
+}
+
+/// The actions that the [`Environment`] can take
+#[derive(Clone, Debug)]
+pub enum ArbiterActions {
+    SendTx(TypedTransaction, ResultSender),
+    // Alert(Address),
+    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>),
+    SetPrice(U256),
+    Mint(u128, ArbiterToken<RevmMiddleware>, Arc<RevmMiddleware>),
+}
+
+#[derive(Clone, Debug)]
+pub enum ArbiterEvents {
+    TxResult(RevmResult),
+    Event(Vec<ethers::types::Log>),
 }
 
 /// Convert a U256 to a U64, discarding the higher bits if the number is larger than 2^64
@@ -292,3 +296,5 @@ pub(crate) mod tests {
         assert!(convert_uint_to_u64(input).is_err());
     }
 }
+
+
