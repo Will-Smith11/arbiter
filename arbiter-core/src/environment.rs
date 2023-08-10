@@ -6,7 +6,6 @@ use ethers::{
     core::types::{Log, U64},
     prelude::ContractDeploymentTx, types::Transaction,
 };
-use ethers_core::types::transaction::eip2718::TypedTransaction;
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{ExecutionResult, TxEnv, U256},
@@ -19,7 +18,7 @@ use anyhow::Result;
 
 use crate::{
     bindings::arbiter_token::ArbiterToken, math::stochastic_process::SeededPoisson,
-    middleware::RevmMiddleware,
+    middleware::RevmMiddleware, strategies::{ArbiterActions, ArbiterEvents},
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -226,22 +225,6 @@ impl EventBroadcaster {
             sender.send(logs.clone()).unwrap();
         }
     }
-}
-
-/// The actions that the [`Environment`] can take
-#[derive(Clone, Debug)]
-pub enum ArbiterActions {
-    SendTx(Transaction, ResultSender),
-    // Alert(Address),
-    Deploy(ContractDeploymentTx<Arc<RevmMiddleware>, RevmMiddleware, ArbiterToken<RevmMiddleware>>),
-    SetPrice(U256),
-    Mint(u128, ArbiterToken<RevmMiddleware>, Arc<RevmMiddleware>),
-}
-
-#[derive(Clone, Debug)]
-pub enum ArbiterEvents {
-    TxResult(RevmResult),
-    Event(Vec<ethers::types::Log>),
 }
 
 /// Convert a U256 to a U64, discarding the higher bits if the number is larger than 2^64

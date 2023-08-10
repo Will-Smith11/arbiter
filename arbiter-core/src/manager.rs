@@ -12,7 +12,7 @@ use artemis_core::{
 // TODO: Add any necessary logging.
 // TODO: Add any necessary custom errors.
 
-use crate::environment::{ArbiterActions, ArbiterEvents, AtomicState, Environment, State};
+use crate::{environment::{AtomicState, Environment, State}, strategies::{ArbiterEvents, ArbiterActions}};
 use std::sync::Arc;
 
 #[derive(Default)]
