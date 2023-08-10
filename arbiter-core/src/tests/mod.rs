@@ -4,22 +4,26 @@ mod interaction;
 mod management;
 mod strategies;
 
-use std::{sync::Arc, task::Poll, time::Duration};
 use std::str::FromStr;
+use std::{sync::Arc, task::Poll, time::Duration};
 
-use anyhow::{Ok, Result};
-use ethers::{
-    prelude::{EthLogDecode, Middleware, StreamExt},
-    types::{Address, Filter, ValueOrArray, U64},
-};
-use artemis_core::{types::{Strategy, Collector, CollectorStream, Executor}, engine::Engine, collectors::log_collector::LogCollector};
 use crate::{
-    bindings::{arbiter_token::*, self, liquid_exchange::LiquidExchange},
+    bindings::{self, arbiter_token::*, liquid_exchange::LiquidExchange},
     environment::{tests::TEST_ENV_LABEL, *},
     manager::*,
     math::*,
     middleware::*,
     strategies::*,
+};
+use anyhow::{Ok, Result};
+use artemis_core::{
+    collectors::log_collector::LogCollector,
+    engine::Engine,
+    types::{Collector, CollectorStream, Executor, Strategy},
+};
+use ethers::{
+    prelude::{EthLogDecode, Middleware, StreamExt},
+    types::{Address, Filter, ValueOrArray, U64},
 };
 
 pub const TEST_ARG_NAME: &str = "ArbiterToken";

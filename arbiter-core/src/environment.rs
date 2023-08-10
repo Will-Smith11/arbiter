@@ -4,7 +4,8 @@
 use artemis_core::engine::Engine;
 use ethers::{
     core::types::{Log, U64},
-    prelude::ContractDeploymentTx, types::Transaction,
+    prelude::ContractDeploymentTx,
+    types::Transaction,
 };
 use revm::{
     db::{CacheDB, EmptyDB},
@@ -17,8 +18,10 @@ use anyhow::Result;
 // TODO: Add custom errors.
 
 use crate::{
-    bindings::arbiter_token::ArbiterToken, math::stochastic_process::SeededPoisson,
-    middleware::RevmMiddleware, strategies::{ArbiterActions, ArbiterEvents},
+    bindings::arbiter_token::ArbiterToken,
+    math::stochastic_process::SeededPoisson,
+    middleware::RevmMiddleware,
+    strategies::{ArbiterActions, ArbiterEvents},
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -69,8 +72,6 @@ pub struct Environment {
     pub(crate) socket: Socket,
     pub(crate) pausevar: Arc<(Mutex<()>, Condvar)>,
 }
-
-
 
 impl Environment {
     /// Creates a new [`Environment`] with the given label.
@@ -281,5 +282,3 @@ pub(crate) mod tests {
         assert!(convert_uint_to_u64(input).is_err());
     }
 }
-
-

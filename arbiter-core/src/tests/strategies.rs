@@ -38,7 +38,6 @@ use super::*;
 //     todo!();
 // }
 
-
 #[async_trait::async_trait]
 impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
     async fn sync_state(&mut self) -> Result<()> {
@@ -53,7 +52,11 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
             for log in logs {
                 println!("log: {:?}", log);
                 if true {
-                    let action = ArbiterActions::Mint(TEST_MINT_AMOUNT, self.arbiter_token_x.clone().unwrap(), self.client.clone());
+                    let action = ArbiterActions::Mint(
+                        TEST_MINT_AMOUNT,
+                        self.arbiter_token_x.clone().unwrap(),
+                        self.client.clone(),
+                    );
                     actions.push(action);
                 }
             }
@@ -64,12 +67,10 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
     }
 }
 
-
 pub(crate) struct TestStrategy {
     pub name: String,
     pub client: Arc<RevmMiddleware>,
     pub arbiter_token_x: Option<ArbiterToken<RevmMiddleware>>,
-
 }
 
 impl TestStrategy {
@@ -82,10 +83,9 @@ impl TestStrategy {
     }
 }
 
-
 /// Notes: Currently the deploy strategy works but then breaks when there is no more events comming from the collector.
 /// I do not believe it makes sense to have a strategy for deploying a contract.
-/// My thoughts are to build a more closed system to test this with. 
+/// My thoughts are to build a more closed system to test this with.
 /// The idea is to 1) deploye a liquid exchange contract and two arbiter tokens
 /// Then the idea is to have a strategy that will continually update the price of the liquid exchange contract
 /// The collector will then collect the price updates and send them to the strategy
@@ -97,9 +97,18 @@ async fn deploy() -> Result<()> {
     manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
     let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
     let client = Arc::new(RevmMiddleware::new(environment));
-    environment.engine().add_collector(Box::new(RevmCollector::new(client.clone())));
-    environment.engine().add_executor(Box::new(RevmExecutor::new(client.clone())));
-    environment.engine().add_strategy(Box::new(TestStrategy::new(TEST_STRATEGY_NAME, client.clone())));
+    environment
+        .engine()
+        .add_collector(Box::new(RevmCollector::new(client.clone())));
+    environment
+        .engine()
+        .add_executor(Box::new(RevmExecutor::new(client.clone())));
+    environment
+        .engine()
+        .add_strategy(Box::new(TestStrategy::new(
+            TEST_STRATEGY_NAME,
+            client.clone(),
+        )));
     manager.start_environment(TEST_ENV_LABEL).await;
     // deploy token 1
     let constructor_args = (
@@ -108,9 +117,11 @@ async fn deploy() -> Result<()> {
         TEST_ARG_DECIMALS,
     );
 
-    let arbiter_token_x = ArbiterToken::deploy(client.clone(), constructor_args).unwrap().send().await?;
+    let arbiter_token_x = ArbiterToken::deploy(client.clone(), constructor_args)
+        .unwrap()
+        .send()
+        .await?;
     println!("arbiter token: {:?}", arbiter_token_x);
-
 
     // deploy token 2
     let constructor_args = (
@@ -118,9 +129,11 @@ async fn deploy() -> Result<()> {
         TEST_ARG_SYMBOLY.to_string(),
         TEST_ARG_DECIMALS,
     );
-    let arbiter_token_y = ArbiterToken::deploy(client.clone(), constructor_args).unwrap().send().await?;
+    let arbiter_token_y = ArbiterToken::deploy(client.clone(), constructor_args)
+        .unwrap()
+        .send()
+        .await?;
     println!("arbiter token: {:?}", arbiter_token_y);
-
 
     // deploy liquid exchange
     let constructor_args = (
@@ -128,9 +141,11 @@ async fn deploy() -> Result<()> {
         arbiter_token_y.address(),
         TEST_MINT_AMOUNT,
     );
-    let liquid_exchange = LiquidExchange::deploy(client.clone(), constructor_args).unwrap().send().await?;
+    let liquid_exchange = LiquidExchange::deploy(client.clone(), constructor_args)
+        .unwrap()
+        .send()
+        .await?;
     println!("liquid exchange: {:?}", liquid_exchange);
-
 
     let filter = Filter {
         address: Some(ethers::types::ValueOrArray::Array(vec![
