@@ -6,7 +6,6 @@ pub mod environment;
 pub mod manager;
 pub mod math;
 pub mod middleware;
-pub mod collector;
-pub mod executor;  
+pub mod strategies;
 #[cfg(test)]
 pub mod tests;

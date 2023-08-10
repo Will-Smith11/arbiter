@@ -142,6 +142,7 @@ impl Environment {
         let state = Arc::clone(&self.state);
         let pausevar = Arc::clone(&self.pausevar);
 
+        println!("Starting environment");
         let handle = thread::spawn(move || {
             let mut expected_events_per_block = seeded_poisson.sample();
             loop {
@@ -203,6 +204,7 @@ impl Environment {
                 }
             }
         });
+        self.start_engine().await;
         handle
     }
 }
