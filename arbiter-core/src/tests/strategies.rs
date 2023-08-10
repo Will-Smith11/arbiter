@@ -1,7 +1,8 @@
 use async_std::channel;
 use ethers_core::types::U256;
-use crossbeam_channel::unbounded;
+use tracing_subscriber::{filter, prelude::*};
 use crate::bindings::counter::Counter;
+use tracing::{error, info, Level};
 
 use super::*;
 
@@ -93,7 +94,9 @@ impl TestStrategy {
 #[async_trait::async_trait]
 impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
     async fn sync_state(&mut self) -> Result<()> {
-        return Ok(());
+        println!("Strategy: Syncing state");
+        let _ = self.sender.send(ArbiterEvents::Increment);
+        Ok(())
     }
 
     /// get event and make actions based on them
@@ -120,7 +123,6 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
 }
 
 
-/// Notes: Currently the deploy strategy works but then breaks when there is no more events comming from the collector.
 /// I do not believe it makes sense to have a strategy for deploying a contract.
 /// My thoughts are to build a more closed system to test this with.
 /// The idea is to deploy a counter contract
@@ -130,16 +132,28 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
 /// the executor will then take these update actions and update the count by sending the calls by to the client
 
 async fn init() -> Result<()> {
+
+
     let mut manager = Manager::new();
 
-    
-    let _ = manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
-    let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
-    let client = Arc::new(RevmMiddleware::new(environment));
+    manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new())?;
+    println!("Added environment");
+    // let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
+    println!("Made client");
 
+    // let client = Arc::new(RevmMiddleware::new(environment));
+
+    let client = {
+        let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
+        Arc::new(RevmMiddleware::new(environment))
+    };
+
+    let _ = manager.start_environment(TEST_ENV_LABEL).await;
+
+    let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
     // Deploy a counter
     let counter = Counter::deploy(client.clone(), ())?.send().await?;
-    println!("Counter address: {}", counter.address());
+    println!("Counter Address: {:#?}", counter.address());
 
     // make a channel between the collector and the strategy
     let (send, rec) = crossbeam_channel::unbounded(); 
@@ -148,26 +162,29 @@ async fn init() -> Result<()> {
     let collector = AgentCollector::new(rec);
     let executor = RevmExecutor::new(client.clone());
 
+    println!("Made strategy, collector, and executor");
+
+    // error here, engine not found
     let engine = environment.engine();
+    println!("Added strategy, collector, and executor");
     engine.add_collector(Box::new(collector));
     engine.add_strategy(Box::new(strategy));
     engine.add_executor(Box::new(executor));
-    let result = environment.start_engine().await;
-    let _ = manager.start_environment(TEST_ENV_LABEL).await;
 
+    let mut set = environment.start_engine().await;
+
+    while let Some(res) = set.join_next().await {
+        info!("res: {:?}", res);
+    }
 
     Ok(())
 }
 
 
 #[tokio::test]
-async fn test_deploy() -> Result<()> {
-    // tracing_subscriber::fmt::init();
-    let arbiter_token = init().await?;
-    // println!("{:?}", arbiter_token);
-    // assert_eq!(
-    //     arbiter_token.address(),
-    //     Address::from_str("0x1a9bb958b1ea4d24475aaa545b25fc2e7eb0871c").unwrap()
-    // );
+async fn test_strategy() -> Result<()> {
+    tracing_subscriber::fmt::init();
+    init().await?;
     Ok(())
+
 }
