@@ -14,7 +14,7 @@ use std::{
     task::{Context, Poll},
 };
 
-type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, ()>;
+pub type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, ()>;
 /// Idea here is to have a collector that can be used to collect events from the revm middleware.
 ///
 /// The actions that the [`Environment`] can take
@@ -22,12 +22,11 @@ type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, ()
 pub enum ArbiterActions {
     SendTx(Transaction),
     ContractCall(ContractFunctionCall),
-    NextTransaction,
 }
 
 #[derive(Clone, Debug)]
 pub enum ArbiterEvents {
-    TxResult(RevmResult),
+    Mint,
     Event(Vec<ethers::types::Log>),
     UpdatePrice(bool),
     PriceUpdated(f64),
@@ -127,77 +126,12 @@ impl Strategy<ArbiterEvents, ArbiterActions> for PriceUpdaterStrategy {
     }
 }
 
-/// This is the arbitraguer strategy.
-pub struct ArbitraguerStrategy {
-    client: Arc<RevmMiddleware>,
-    /// I am not sure the best way to make the contracts generic
-    // What i would like to do is have the contstructor take in two exchange contracts and then we don't neeed the client
-    // There might be a way to just use the client and maybe the exchange addresses, but I am not sure if it will be clean.
-    // exchanges: (LiquidExchange<RevmMiddleware>, <RevmMiddleware>),
-    exchange_prices: (f64, f64),
-    event_sender: crossbeam_channel::Sender<ArbiterEvents>,
-}
 
-impl ArbitraguerStrategy {
-    /// Constructor for the [`ArbitraguerStrategy`].
-    pub fn new(
-        client: Arc<RevmMiddleware>,
-        event_sender: crossbeam_channel::Sender<ArbiterEvents>,
-    ) -> Self {
-        Self {
-            client,
-            exchange_prices: (0.0, 0.0),
-            event_sender,
-        }
-    }
-
-    /// This function builds two function calls to execute an arbitrage on the liquid exchange and the external market
-    pub fn build_arbitrage_call(
-        &self,
-        _arb_size: usize,
-    ) -> (ContractFunctionCall, ContractFunctionCall) {
-        // one call for each leg
-        todo!()
-    }
-}
-
-impl Arbitraguer for ArbitraguerStrategy {
-    /// check bounds, if in bounds return the size of the arbitrage
-    /// else return None
-    fn detect_arbitrage(&self, _new_price: f64) -> Option<usize> {
-        todo!()
-    }
-}
-
-#[async_trait::async_trait]
-impl Strategy<ArbiterEvents, ArbiterActions> for ArbitraguerStrategy {
-    async fn sync_state(&mut self) -> Result<()> {
-        todo!()
-    }
-
-    async fn process_event(&mut self, event: ArbiterEvents) -> Vec<ArbiterActions> {
-        match event {
-            ArbiterEvents::PriceUpdated(new_price) => {
-                if let Some(arb_size) = self.detect_arbitrage(new_price) {
-                    let (tx1, tx2) = self.build_arbitrage_call(arb_size);
-                    vec![
-                        ArbiterActions::ContractCall(tx1),
-                        ArbiterActions::ContractCall(tx2),
-                    ]
-                } else {
-                    let _ = self.event_sender.send(ArbiterEvents::UpdatePrice(true));
-                    vec![]
-                }
-            }
-            _ => vec![],
-        }
-    }
-}
 
 /// this is a trait for the arbitraguer
 /// it is intended to be used to detect arbitrage opportunities for different markets and tradding functions
 /// implement it on a strategy
-trait Arbitraguer {
+pub trait Arbitraguer {
     fn detect_arbitrage(&self, new_price: f64) -> Option<usize>;
 }
 
