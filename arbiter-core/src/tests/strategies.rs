@@ -163,13 +163,10 @@ async fn init() -> Result<()> {
     let executor = RevmExecutor::new(client.clone());
 
     println!("Made strategy, collector, and executor");
-
-    // error here, engine not found
-    let engine = environment.engine();
+    environment.engine().add_collector(Box::new(collector));
+    environment.engine().add_strategy(Box::new(strategy));
+    environment.engine().add_executor(Box::new(executor));
     println!("Added strategy, collector, and executor");
-    engine.add_collector(Box::new(collector));
-    engine.add_strategy(Box::new(strategy));
-    engine.add_executor(Box::new(executor));
 
     let mut set = environment.start_engine().await;
 
