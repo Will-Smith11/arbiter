@@ -1,5 +1,5 @@
 use crate::{
-    bindings::liquid_exchange::LiquidExchange, environment::RevmResult, middleware::RevmMiddleware,
+    bindings::liquid_exchange::LiquidExchange, middleware::RevmMiddleware,
 };
 use anyhow::Result;
 use artemis_core::types::Executor;
@@ -14,22 +14,36 @@ use std::{
     task::{Context, Poll},
 };
 
+/// type aliases for contract calls
 pub type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, ()>;
+/// type alias for contract calls that has a bool
+pub type ContractHackCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, bool>;
 /// Idea here is to have a collector that can be used to collect events from the revm middleware.
 ///
 /// The actions that the [`Environment`] can take
 #[derive(Clone, Debug)]
 pub enum ArbiterActions {
+    /// raw transaction
     SendTx(Transaction),
+    /// contract call
     ContractCall(ContractFunctionCall),
+    /// contract call that has a bool
+    ContractHackCall(ContractHackCall),
 }
 
+/// Arbiter Events
 #[derive(Clone, Debug)]
 pub enum ArbiterEvents {
-    Mint,
+    /// eth logs event
     Event(Vec<ethers::types::Log>),
+    /// Price update event to stocastic process
     UpdatePrice(bool),
+    /// Signal that the price is updated
     PriceUpdated(f64),
+    /// for testing counter
+    Increment,
+    /// for testing counter
+    SetNumber(U256),
 }
 
 /// We present a collector that can be used to collect events from a chennel shared with other Agents(Straegies)
@@ -37,6 +51,7 @@ pub enum ArbiterEvents {
 /// There is a nice LogCollector in the Artemis core crate that can be used nicely for eth logs as well.
 pub struct AgentCollector {
     reciever_stream: crossbeam_channel::Receiver<ArbiterEvents>,
+
 }
 
 impl Stream for AgentCollector {
@@ -132,6 +147,7 @@ impl Strategy<ArbiterEvents, ArbiterActions> for PriceUpdaterStrategy {
 /// it is intended to be used to detect arbitrage opportunities for different markets and tradding functions
 /// implement it on a strategy
 pub trait Arbitraguer {
+    /// detect arbitrage opportunities
     fn detect_arbitrage(&self, new_price: f64) -> Option<usize>;
 }
 

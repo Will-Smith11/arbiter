@@ -1,4 +1,7 @@
+use async_std::channel;
 use ethers_core::types::U256;
+use crossbeam_channel::unbounded;
+use crate::bindings::counter::Counter;
 
 use super::*;
 
@@ -71,18 +74,18 @@ impl Strategy<ArbiterEvents, ArbiterActions> for ArbitraguerStrategy {
 
 pub struct TestStrategy {
     pub name: String,
-    pub client: Arc<RevmMiddleware>,
-    pub arbiter_token: ArbiterToken<RevmMiddleware>,
-    pub mint_params: (Address, U256),
+    pub counter: Counter<RevmMiddleware>,
+    pub count: usize,
+    pub sender: crossbeam_channel::Sender<ArbiterEvents>
 }
 
 impl TestStrategy {
-    pub fn new<S: Into<String>>(name: S, client: Arc<RevmMiddleware>, arbiter_token: ArbiterToken<RevmMiddleware>) -> Self {
+    pub fn new<S: Into<String>>(name: S, client: Arc<RevmMiddleware>, counter: Counter<RevmMiddleware>, sender: crossbeam_channel::Sender<ArbiterEvents>) -> Self {
         Self {
             name: name.into(),
-            client,
-            arbiter_token,
-            mint_params: (client.default_sender().unwrap(), U256::from(1000)),
+            counter,
+            count: 0,
+            sender,
         }
     }
 }
@@ -96,8 +99,19 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
     /// get event and make actions based on them
     async fn process_event(&mut self, event: ArbiterEvents) -> Vec<ArbiterActions> {
         match event {
-            ArbiterEvents::Mint => {
-                let tx1 = self.arbiter_token.mint(self.mint_params.0, self.mint_params.1);
+            ArbiterEvents::Increment => {
+                let tx1 = self.counter.increment();
+                if self.count <= 5 {
+                    self.count += 1;
+                    let _ = self.sender.send(ArbiterEvents::Increment);
+                    vec![ArbiterActions::ContractCall(tx1)]
+                } else {
+                    let _ = self.sender.send(ArbiterEvents::SetNumber(U256::from(0)));
+                    vec![]
+                }
+            }
+            ArbiterEvents::SetNumber(num) => {
+                let tx1 = self.counter.set_number(num);
                 vec![ArbiterActions::ContractCall(tx1)]
             }
             _ => vec![],
@@ -106,108 +120,50 @@ impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
 }
 
 
-
 /// Notes: Currently the deploy strategy works but then breaks when there is no more events comming from the collector.
 /// I do not believe it makes sense to have a strategy for deploying a contract.
 /// My thoughts are to build a more closed system to test this with.
-/// The idea is to 1) deploye a liquid exchange contract and two arbiter tokens
-/// Then the idea is to have a strategy that will continually update the price of the liquid exchange contract
-/// The collector will then collect the price updates and send them to the strategy
-/// The strategy will then take in these price update events and emit price update actions
-/// the executor will then take these price update actions and update the price of the liquid exchange contract by sending them to the client
+/// The idea is to deploy a counter contract
+/// Then the idea is to have a strategy that will continually update the counter and communicate an increment event to the collector
+/// The collector will then collect the increment events and send them to the strategy
+/// The strategy will then take in these events and emit increment actions to the executor via function calls
+/// the executor will then take these update actions and update the count by sending the calls by to the client
 
-async fn deploy() -> Result<()> {
+async fn init() -> Result<()> {
     let mut manager = Manager::new();
-    manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
+
+    
+    let _ = manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
     let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
     let client = Arc::new(RevmMiddleware::new(environment));
-    environment
-        .engine()
-        .add_collector(Box::new(RevmCollector::new(client.clone())));
-    environment
-        .engine()
-        .add_executor(Box::new(RevmExecutor::new(client.clone())));
-    environment
-        .engine()
-        .add_strategy(Box::new(TestStrategy::new(
-            TEST_STRATEGY_NAME,
-            client.clone(),
-        )));
-    manager.start_environment(TEST_ENV_LABEL).await;
-    // deploy token 1
-    let constructor_args = (
-        TEST_ARG_NAMEX.to_string(),
-        TEST_ARG_SYMBOLX.to_string(),
-        TEST_ARG_DECIMALS,
-    );
 
-    let arbiter_token_x = ArbiterToken::deploy(client.clone(), constructor_args)
-        .unwrap()
-        .send()
-        .await?;
-    println!("arbiter token: {:?}", arbiter_token_x);
+    // Deploy a counter
+    let counter = Counter::deploy(client.clone(), ())?.send().await?;
+    println!("Counter address: {}", counter.address());
 
-    // deploy token 2
-    let constructor_args = (
-        TEST_ARG_NAMEY.to_string(),
-        TEST_ARG_SYMBOLY.to_string(),
-        TEST_ARG_DECIMALS,
-    );
-    let arbiter_token_y = ArbiterToken::deploy(client.clone(), constructor_args)
-        .unwrap()
-        .send()
-        .await?;
-    println!("arbiter token: {:?}", arbiter_token_y);
+    // make a channel between the collector and the strategy
+    let (send, rec) = crossbeam_channel::unbounded(); 
+    // make strategy, collector, and executor
+    let strategy = TestStrategy::new("test", client.clone(), counter, send);
+    let collector = AgentCollector::new(rec);
+    let executor = RevmExecutor::new(client.clone());
 
-    // deploy liquid exchange
-    let constructor_args = (
-        arbiter_token_x.address(),
-        arbiter_token_y.address(),
-        TEST_MINT_AMOUNT,
-    );
-    let liquid_exchange = LiquidExchange::deploy(client.clone(), constructor_args)
-        .unwrap()
-        .send()
-        .await?;
-    println!("liquid exchange: {:?}", liquid_exchange);
+    let engine = environment.engine();
+    engine.add_collector(Box::new(collector));
+    engine.add_strategy(Box::new(strategy));
+    engine.add_executor(Box::new(executor));
+    let result = environment.start_engine().await;
+    let _ = manager.start_environment(TEST_ENV_LABEL).await;
 
-    let filter = Filter {
-        address: Some(ethers::types::ValueOrArray::Array(vec![
-            liquid_exchange.address()
-        ])),
-        topics: [None, None, None, None], // None for all topics
-        ..Default::default()
-    };
 
-    // i think we should use a log collector from artemis core for most everything we want to do, although we can't untill we have pub sub
-    // let collector = artemis_core::collectors::log_collector::LogCollector::new(client.clone(), filter);
-    let mut test_strategy = TestStrategy::new(TEST_STRATEGY_NAME, client.clone());
-    test_strategy.arbiter_token_x = Some(arbiter_token_x);
-
-    // environment.engine().add_collector(Box::new(collector));
-    // environment.engine().add_strategy(Box::new(test_strategy));
-    // let mut join_set = environment.start_engine().await;
-    // environment.run().await;
-    // while let Some(res) = join_set.join_next().await {
-    //     println!("res: {:?}", res);
-    // }
     Ok(())
-    // Ok(ArbiterToken::deploy(
-    //     environment.agents[0].client.clone(),
-    //     (
-    //         TEST_ARG_NAME.to_string(),
-    //         TEST_ARG_SYMBOL.to_string(),
-    //         TEST_ARG_DECIMALS,
-    //     ),
-    // )?
-    // .send()
-    // .await?)
 }
+
 
 #[tokio::test]
 async fn test_deploy() -> Result<()> {
     // tracing_subscriber::fmt::init();
-    let arbiter_token = deploy().await?;
+    let arbiter_token = init().await?;
     // println!("{:?}", arbiter_token);
     // assert_eq!(
     //     arbiter_token.address(),
