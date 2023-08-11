@@ -14,7 +14,7 @@ use artemis_core::{
 
 use crate::{
     environment::{AtomicState, Environment, State},
-    strategies::{ArbiterActions, ArbiterEvents},
+    strategies::{SimulationActions, SimulationEvents},
 };
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ impl Manager {
         environment_label: S,
         block_rate: f64,
         seed: u64,
-        engine: Engine<ArbiterEvents, ArbiterActions>,
+        engine: Engine<SimulationEvents, SimulationActions>,
     ) -> Result<()> {
         if self
             .environments

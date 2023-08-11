@@ -6,21 +6,21 @@ use crate::bindings::counter::Counter;
 use super::*;
 
 /// This is the arbitraguer strategy.
-pub struct ArbitraguerStrategy {
+pub struct ArbitrageurStrategy {
     client: Arc<RevmMiddleware>,
     /// I am not sure the best way to make the contracts generic
     // What i would like to do is have the contstructor take in two exchange contracts and then we don't neeed the client
     // There might be a way to just use the client and maybe the exchange addresses, but I am not sure if it will be clean.
     // exchanges: (LiquidExchange<RevmMiddleware>, <RevmMiddleware>),
     exchange_prices: (f64, f64),
-    event_sender: crossbeam_channel::Sender<ArbiterEvents>,
+    event_sender: crossbeam_channel::Sender<SimulationEvents>,
 }
 
-impl ArbitraguerStrategy {
+impl ArbitrageurStrategy {
     /// Constructor for the [`ArbitraguerStrategy`].
     pub fn new(
         client: Arc<RevmMiddleware>,
-        event_sender: crossbeam_channel::Sender<ArbiterEvents>,
+        event_sender: crossbeam_channel::Sender<SimulationEvents>,
     ) -> Self {
         Self {
             client,
@@ -39,48 +39,15 @@ impl ArbitraguerStrategy {
     }
 }
 
-impl Arbitraguer for ArbitraguerStrategy {
-    /// check bounds, if in bounds return the size of the arbitrage
-    /// else return None
-    fn detect_arbitrage(&self, _new_price: f64) -> Option<usize> {
-        todo!()
-    }
-}
-
-#[async_trait::async_trait]
-impl Strategy<ArbiterEvents, ArbiterActions> for ArbitraguerStrategy {
-    async fn sync_state(&mut self) -> Result<()> {
-        todo!()
-    }
-
-    async fn process_event(&mut self, event: ArbiterEvents) -> Vec<ArbiterActions> {
-        match event {
-            ArbiterEvents::PriceUpdated(new_price) => {
-                if let Some(arb_size) = self.detect_arbitrage(new_price) {
-                    let (tx1, tx2) = self.build_arbitrage_call(arb_size);
-                    vec![
-                        ArbiterActions::ContractCall(tx1),
-                        ArbiterActions::ContractCall(tx2),
-                    ]
-                } else {
-                    let _ = self.event_sender.send(ArbiterEvents::UpdatePrice(true));
-                    vec![]
-                }
-            }
-            _ => vec![],
-        }
-    }
-}
-
 pub struct TestStrategy {
     pub name: String,
     pub counter: Counter<RevmMiddleware>,
     pub count: usize,
-    pub sender: crossbeam_channel::Sender<ArbiterEvents>
+    pub sender: crossbeam_channel::Sender<SimulationEvents>
 }
 
 impl TestStrategy {
-    pub fn new<S: Into<String>>(name: S, client: Arc<RevmMiddleware>, counter: Counter<RevmMiddleware>, sender: crossbeam_channel::Sender<ArbiterEvents>) -> Self {
+    pub fn new<S: Into<String>>(name: S, counter: Counter<RevmMiddleware>, sender: crossbeam_channel::Sender<SimulationEvents>) -> Self {
         Self {
             name: name.into(),
             counter,
@@ -91,28 +58,21 @@ impl TestStrategy {
 }
 
 #[async_trait::async_trait]
-impl Strategy<ArbiterEvents, ArbiterActions> for TestStrategy {
+impl Strategy<SimulationEvents, SimulationActions> for TestStrategy {
     async fn sync_state(&mut self) -> Result<()> {
+        println!("syncing state");
+        
         return Ok(());
     }
 
     /// get event and make actions based on them
-    async fn process_event(&mut self, event: ArbiterEvents) -> Vec<ArbiterActions> {
+    async fn process_event(&mut self, event: SimulationEvents) -> Vec<SimulationActions> {
+        println!("processing event: {:?}", event);
         match event {
-            ArbiterEvents::Increment => {
-                let tx1 = self.counter.increment();
-                if self.count <= 5 {
-                    self.count += 1;
-                    let _ = self.sender.send(ArbiterEvents::Increment);
-                    vec![ArbiterActions::ContractCall(tx1)]
-                } else {
-                    let _ = self.sender.send(ArbiterEvents::SetNumber(U256::from(0)));
-                    vec![]
-                }
-            }
-            ArbiterEvents::SetNumber(num) => {
-                let tx1 = self.counter.set_number(num);
-                vec![ArbiterActions::ContractCall(tx1)]
+            SimulationEvents::Message(string) => {
+                let reply = format!("{}: {}", self.name, string);
+                let action = SimulationActions::Reply(reply);
+                vec![action]
             }
             _ => vec![],
         }
@@ -134,34 +94,33 @@ async fn init() -> Result<()> {
 
     
     let _ = manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
-    let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
-    let client = Arc::new(RevmMiddleware::new(environment));
-
-    // Deploy a counter
-    let counter = Counter::deploy(client.clone(), ())?.send().await?;
-    println!("Counter address: {}", counter.address());
-
+    let client = Arc::new(RevmMiddleware::new(manager.environments.get(TEST_ENV_LABEL).unwrap()));
     // make a channel between the collector and the strategy
     let (send, rec) = crossbeam_channel::unbounded(); 
     // make strategy, collector, and executor
-    let strategy = TestStrategy::new("test", client.clone(), counter, send);
-    let collector = AgentCollector::new(rec);
-    let executor = RevmExecutor::new(client.clone());
+    let counter = Counter::new(ethers::types::H160::default(), client.clone());
+    let strategy = TestStrategy::new("test", counter, send.clone());
+    let collector = SimulationCollector::new(rec);
+    let executor = SimulationExecutor::new(client.clone());
 
-    let engine = environment.engine();
-    engine.add_collector(Box::new(collector));
-    engine.add_strategy(Box::new(strategy));
-    engine.add_executor(Box::new(executor));
-    let result = environment.start_engine().await;
+    // TODO: Giving the manager a way to add all of these and control the engine would be better.
+    manager.environments.get_mut(TEST_ENV_LABEL).unwrap().engine().add_collector(Box::new(collector));
+    manager.environments.get_mut(TEST_ENV_LABEL).unwrap().engine().add_strategy(Box::new(strategy));
+    manager.environments.get_mut(TEST_ENV_LABEL).unwrap().engine().add_executor(Box::new(executor));
+    
     let _ = manager.start_environment(TEST_ENV_LABEL).await;
-
+        // Deploy a counter
+        let counter = Counter::deploy(client.clone(), ())?.send().await?;
+        println!("Counter address: {}", counter.address());
+    send.send(SimulationEvents::Message("hello to the strategy".to_string())).unwrap();
+    
 
     Ok(())
 }
 
 
 #[tokio::test]
-async fn test_deploy() -> Result<()> {
+async fn test_strategy() -> Result<()> {
     // tracing_subscriber::fmt::init();
     let arbiter_token = init().await?;
     // println!("{:?}", arbiter_token);

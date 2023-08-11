@@ -21,7 +21,7 @@ use crate::{
     bindings::arbiter_token::ArbiterToken,
     math::stochastic_process::SeededPoisson,
     middleware::RevmMiddleware,
-    strategies::{ArbiterActions, ArbiterEvents},
+    strategies::{SimulationActions, SimulationEvents},
 };
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use tokio::task::JoinSet;
@@ -68,7 +68,7 @@ pub struct Environment {
     pub(crate) state: Arc<AtomicState>,
     pub(crate) evm: EVM<CacheDB<EmptyDB>>,
     pub(crate) seeded_poisson: SeededPoisson,
-    pub(crate) engine: Option<Engine<ArbiterEvents, ArbiterActions>>,
+    pub(crate) engine: Option<Engine<SimulationEvents, SimulationActions>>,
     pub(crate) socket: Socket,
     pub(crate) pausevar: Arc<(Mutex<()>, Condvar)>,
 }
@@ -79,7 +79,7 @@ impl Environment {
         label: S,
         block_rate: f64,
         seed: u64,
-        mut engine: Engine<ArbiterEvents, ArbiterActions>,
+        engine: Engine<SimulationEvents, SimulationActions>,
     ) -> Self {
         let mut evm = EVM::new();
         let db = CacheDB::new(EmptyDB {});
@@ -109,7 +109,7 @@ impl Environment {
 
     // TODO: Get rid of this probably
     /// returns mutable engine
-    pub fn engine(&mut self) -> &mut Engine<ArbiterEvents, ArbiterActions> {
+    pub fn engine(&mut self) -> &mut Engine<SimulationEvents, SimulationActions> {
         self.engine.as_mut().unwrap()
     }
 
@@ -204,7 +204,10 @@ impl Environment {
                 }
             }
         });
-        self.start_engine().await;
+        let mut set = self.start_engine().await;
+        while let Some(res) = set.join_next().await {
+            println!("res: {:?}", res);
+        }
         handle
     }
 }
