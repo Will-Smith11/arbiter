@@ -16,6 +16,7 @@ pub type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware
 pub enum SimulationActions {
     SendTx(Transaction),
     ContractCall(ContractFunctionCall),
+    ContractSend(ContractFunctionCall),
     Reply(String),
 }
 
@@ -88,6 +89,11 @@ impl Executor<SimulationActions> for SimulationExecutor {
             SimulationActions::ContractCall(tx) => {
                 if tx.call().await.is_err() {
                     return Err(anyhow::anyhow!("Failed to call contract."));
+                }
+            }
+            SimulationActions::ContractSend(tx) => {
+                if tx.send().await.is_err() {
+                    return Err(anyhow::anyhow!("Failed to send contract."));
                 }
             }
             SimulationActions::Reply(msg) => {
