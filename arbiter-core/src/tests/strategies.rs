@@ -1,7 +1,6 @@
 use async_std::channel;
 use ethers_core::types::U256;
 use crossbeam_channel::unbounded;
-use crate::bindings::counter::Counter;
 
 use super::*;
 

@@ -10,35 +10,22 @@ use std::{
     task::{Context, Poll},
 };
 
-/// type aliases for contract calls
 pub type ContractFunctionCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, ()>;
-/// type alias for contract calls that has a bool
-pub type ContractHackCall = FunctionCall<Arc<RevmMiddleware>, RevmMiddleware, bool>;
-/// Idea here is to have a collector that can be used to collect events from the revm middleware.
-///
-/// The actions that the [`Environment`] can take
+
 #[derive(Clone, Debug)]
 pub enum SimulationActions {
-    /// raw transaction
     SendTx(Transaction),
-    /// contract call
     ContractCall(ContractFunctionCall),
-    /// contract call that has a bool
-    ContractHackCall(ContractHackCall),
     Reply(String),
 }
 
 /// Arbiter Events
 #[derive(Clone, Debug)]
 pub enum SimulationEvents {
-    /// eth logs event
     Event(Vec<ethers::types::Log>),
     Message(String),
 }
 
-/// We present a collector that can be used to collect events from a chennel shared with other Agents(Straegies)
-/// Notice this collector doesn't get events from the revm middleware directly, but rather from a channel shared with the strategies.
-/// There is a nice LogCollector in the Artemis core crate that can be used nicely for eth logs as well.
 pub struct SimulationCollector {
     reciever_stream: crossbeam_channel::Receiver<SimulationEvents>,
 }
@@ -58,9 +45,7 @@ impl Stream for SimulationCollector {
 }
 
 impl SimulationCollector {
-    /// Constructor for the [`AgentCollector`].
     pub fn new(event_channel: crossbeam_channel::Receiver<SimulationEvents>) -> Self {
-        // figure out how to make a channel between the strategies and the collector
         Self {
             reciever_stream: event_channel,
         }
@@ -81,15 +66,11 @@ impl Collector<SimulationEvents> for SimulationCollector {
     }
 }
 
-/// Executors for revm
-/// This is a bespoke executor for the revm middleware
 pub struct SimulationExecutor {
-    /// for evm communication
     client: Arc<RevmMiddleware>,
 }
 
 impl SimulationExecutor {
-    /// Constructor for the [`RevmExecutor`].
     pub fn new(client: Arc<RevmMiddleware>) -> Self {
         Self { client }
     }
