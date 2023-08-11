@@ -148,12 +148,9 @@ async fn init() -> Result<()> {
         Arc::new(RevmMiddleware::new(environment))
     };
 
-    let _ = manager.start_environment(TEST_ENV_LABEL).await;
 
     let environment = manager.environments.get_mut(TEST_ENV_LABEL).unwrap();
-    // Deploy a counter
-    let counter = Counter::deploy(client.clone(), ())?.send().await?;
-    println!("Counter Address: {:#?}", counter.address());
+
 
     // make a channel between the collector and the strategy
     let (send, rec) = crossbeam_channel::unbounded(); 
@@ -167,6 +164,13 @@ async fn init() -> Result<()> {
     environment.engine().add_strategy(Box::new(strategy));
     environment.engine().add_executor(Box::new(executor));
     println!("Added strategy, collector, and executor");
+    
+    let _ = manager.start_environment(TEST_ENV_LABEL).await;
+
+    // Deploy a counter
+    let counter = Counter::deploy(client.clone(), ())?.send().await?;
+    println!("Counter Address: {:#?}", counter.address());
+
 
     let mut set = environment.start_engine().await;
 
