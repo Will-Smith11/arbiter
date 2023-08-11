@@ -41,17 +41,13 @@ impl ArbitrageurStrategy {
 
 pub struct TestStrategy {
     pub name: String,
-    pub counter: Counter<RevmMiddleware>,
-    pub count: usize,
     pub sender: crossbeam_channel::Sender<SimulationEvents>
 }
 
 impl TestStrategy {
-    pub fn new<S: Into<String>>(name: S, counter: Counter<RevmMiddleware>, sender: crossbeam_channel::Sender<SimulationEvents>) -> Self {
+    pub fn new<S: Into<String>>(name: S, sender: crossbeam_channel::Sender<SimulationEvents>) -> Self {
         Self {
             name: name.into(),
-            counter,
-            count: 0,
             sender,
         }
     }
@@ -95,12 +91,12 @@ async fn init() -> Result<()> {
     
     let _ = manager.add_environment(TEST_ENV_LABEL, 1.0, 1, Engine::new());
     let client = Arc::new(RevmMiddleware::new(manager.environments.get(TEST_ENV_LABEL).unwrap()));
-    // make a channel between the collector and the strategy
-    let (send, rec) = crossbeam_channel::unbounded(); 
-    // make strategy, collector, and executor
-    let counter = Counter::new(ethers::types::H160::default(), client.clone());
-    let strategy = TestStrategy::new("test", counter, send.clone());
-    let collector = SimulationCollector::new(rec);
+
+    // make a channel to use for communication of events
+    let (sender, receiver) = crossbeam_channel::unbounded(); 
+    
+    let strategy = TestStrategy::new("test", sender.clone());
+    let collector = SimulationCollector::new(receiver);
     let executor = SimulationExecutor::new(client.clone());
 
     // TODO: Giving the manager a way to add all of these and control the engine would be better.
@@ -108,25 +104,15 @@ async fn init() -> Result<()> {
     manager.environments.get_mut(TEST_ENV_LABEL).unwrap().engine().add_strategy(Box::new(strategy));
     manager.environments.get_mut(TEST_ENV_LABEL).unwrap().engine().add_executor(Box::new(executor));
     
-    let _ = manager.start_environment(TEST_ENV_LABEL).await;
-        // Deploy a counter
-        let counter = Counter::deploy(client.clone(), ())?.send().await?;
-        println!("Counter address: {}", counter.address());
-    send.send(SimulationEvents::Message("hello to the strategy".to_string())).unwrap();
+    manager.start_environment(TEST_ENV_LABEL).await?;
+    sender.send(SimulationEvents::Message("hello to the strategy".to_string())).unwrap();
     
-
     Ok(())
 }
 
 
 #[tokio::test]
 async fn test_strategy() -> Result<()> {
-    // tracing_subscriber::fmt::init();
-    let arbiter_token = init().await?;
-    // println!("{:?}", arbiter_token);
-    // assert_eq!(
-    //     arbiter_token.address(),
-    //     Address::from_str("0x1a9bb958b1ea4d24475aaa545b25fc2e7eb0871c").unwrap()
-    // );
+    init().await?;
     Ok(())
 }
