@@ -5,40 +5,6 @@ use crate::bindings::counter::Counter;
 
 use super::*;
 
-/// This is the arbitraguer strategy.
-pub struct ArbitrageurStrategy {
-    client: Arc<RevmMiddleware>,
-    /// I am not sure the best way to make the contracts generic
-    // What i would like to do is have the contstructor take in two exchange contracts and then we don't neeed the client
-    // There might be a way to just use the client and maybe the exchange addresses, but I am not sure if it will be clean.
-    // exchanges: (LiquidExchange<RevmMiddleware>, <RevmMiddleware>),
-    exchange_prices: (f64, f64),
-    event_sender: crossbeam_channel::Sender<SimulationEvents>,
-}
-
-impl ArbitrageurStrategy {
-    /// Constructor for the [`ArbitraguerStrategy`].
-    pub fn new(
-        client: Arc<RevmMiddleware>,
-        event_sender: crossbeam_channel::Sender<SimulationEvents>,
-    ) -> Self {
-        Self {
-            client,
-            exchange_prices: (0.0, 0.0),
-            event_sender,
-        }
-    }
-
-    /// This function builds two function calls to execute an arbitrage on the liquid exchange and the external market
-    pub fn build_arbitrage_call(
-        &self,
-        _arb_size: usize,
-    ) -> (ContractFunctionCall, ContractFunctionCall) {
-        // one call for each leg
-        todo!()
-    }
-}
-
 pub struct TestStrategy {
     pub name: String,
     pub sender: crossbeam_channel::Sender<SimulationEvents>
